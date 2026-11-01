@@ -49,12 +49,24 @@ export class TwitchService {
     if (!response.ok) console.error(`Twitch chat send failed (${response.status})`);
   }
 
+  private keepaliveMs = 15_000;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
+
+  connected(): boolean { return this.socket !== null; }
+
   async start(): Promise<void> {
     this.stopped = false;
+    if (this.socket) return; // already listening; don't open a second socket
     await this.connect();
   }
 
-  stop(): void { this.stopped = true; this.socket?.close(); this.socket = null; }
+  stop(): void { this.stopped = true; if (this.watchdog) clearTimeout(this.watchdog); this.socket?.close(); this.socket = null; }
+
+  // Twitch sends a message (or a keepalive) at least every keepalive_timeout_seconds; if it goes quiet, reconnect.
+  private feedWatchdog(socket: WebSocket): void {
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = setTimeout(() => { if (this.socket === socket) { console.warn('EventSub went quiet; reconnecting'); socket.terminate(); } }, this.keepaliveMs + 5_000);
+  }
 
   private async connect(url = 'wss://eventsub.wss.twitch.tv/ws'): Promise<void> {
     if (this.stopped) return;
@@ -70,6 +82,8 @@ export class TwitchService {
 
   private async onMessage(socket: WebSocket, event: EventEnvelope): Promise<void> {
     const type = event.metadata.message_type;
+    if (type === 'session_welcome') this.keepaliveMs = Number(event.payload.session.keepalive_timeout_seconds ?? 10) * 1000;
+    this.feedWatchdog(socket);
     if (type === 'session_welcome') {
       this.sessionId = event.payload.session.id;
       if (this.reconnectUrl) { this.reconnectUrl = null; return; }
@@ -87,10 +101,9 @@ export class TwitchService {
       const login = String(message.chatter_user_login ?? 'viewer');
       const userId = String(message.chatter_user_id ?? login);
       const text = String(message.message?.text ?? '');
-      let accepted = false;
-      if (text.toLowerCase().startsWith('!line ')) accepted = await this.engine.submitLine({ text: text.slice(6), login, userId });
-      else if (/^![1-4]$/.test(text)) accepted = this.engine.vote(userId, Number(text.slice(1)) - 1);
-      if (accepted) await this.sendChat(text.startsWith('!line') ? `line saved @${login}` : `vote counted @${login}`);
+      // no reply per line or vote (spam and rate limits); the server announces each phase once instead
+      if (text.toLowerCase().startsWith('!line ')) await this.engine.submitLine({ text: text.slice(6), login, userId });
+      else if (/^![1-4]$/.test(text.trim())) this.engine.vote(userId, Number(text.trim().slice(1)) - 1);
     }
   }
 }

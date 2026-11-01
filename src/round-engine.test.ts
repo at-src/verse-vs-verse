@@ -39,6 +39,29 @@ describe('RoundEngine', () => {
     expect(engine.snapshot().phase).toBe('RELEASE');
   });
 
+  it('moves on from PLAY by itself and returns to IDLE after the release', async () => {
+    vi.useFakeTimers();
+    try {
+      const engine = new RoundEngine({
+        writeSeconds: 2, voteSeconds: 2, roundsPerSong: 1, maxSongsPerHour: 5, releaseSeconds: 3,
+        channelId: 'test', channelLogin: 'tester', judge: new MockLineJudge(), moderation: new MockModeration(),
+        music: new MockMusicProvider(), artist: new MockSceneArtist(), voice: new MockVoice(),
+      });
+      await engine.start();
+      await engine.submitLine({ text: 'Paper planes over the city', login: 'a', userId: '1' });
+      await vi.advanceTimersByTimeAsync(2_000); // WRITE ends
+      await vi.advanceTimersByTimeAsync(2_000); // VOTE ends -> PRODUCE -> PLAY
+      expect(engine.snapshot().phase).toBe('PLAY');
+      await vi.advanceTimersByTimeAsync(5_600); // mock clip is 4s (one short line) + 1.5s -> RELEASE
+      expect(engine.snapshot().phase).toBe('RELEASE');
+      await vi.advanceTimersByTimeAsync(3_100); // release hold
+      expect(engine.snapshot().phase).toBe('IDLE');
+      await engine.start(); // a new song can start again
+      expect(engine.snapshot().phase).toBe('WRITE');
+      engine.stop();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('enforces the hourly song limit', async () => {
     const engine = new RoundEngine({
       writeSeconds: 45, voteSeconds: 30, roundsPerSong: 1, maxSongsPerHour: 1,

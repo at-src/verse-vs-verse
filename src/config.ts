@@ -11,6 +11,7 @@ export const config = {
   writeSeconds: positiveInt(process.env.WRITE_SECONDS, 45),
   voteSeconds: positiveInt(process.env.VOTE_SECONDS, 30),
   roundsPerSong: positiveInt(process.env.ROUNDS_PER_SONG, 4),
+  releaseSeconds: positiveInt(process.env.RELEASE_SECONDS, 20),
   maxSongsPerHour: positiveInt(process.env.MAX_SONGS_PER_HOUR, 3),
   twitchClientId: process.env.TWITCH_CLIENT_ID ?? '',
   twitchClientSecret: process.env.TWITCH_CLIENT_SECRET ?? '',

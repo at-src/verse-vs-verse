@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { db } from './db.js';
 import { MockLineJudge, MockModeration, MockMusicProvider, MockSceneArtist, MockVoice } from './adapters/mock.js';
-import { RoundEngine, type RoundEvent, type CandidateLine } from './round-engine.js';
+import { RoundEngine, type RoundEvent, type RoundState, type CandidateLine } from './round-engine.js';
 import { TwitchService } from './twitch.js';
 
 const app = express();
@@ -16,7 +16,22 @@ app.use(express.json());
 const oauthStates = new Map<string, number>();
 const scopes = ['user:read:chat', 'user:write:chat', 'channel:read:redemptions', 'moderator:read:followers'];
 
+let lastPhase = 'IDLE';
+let twitchRef: TwitchService | null = null;
+// one chat message per phase change, instead of a reply to every line and vote
+function announce(state: RoundState): void {
+  if (state.phase === lastPhase) return;
+  lastPhase = state.phase;
+  const winner = state.song.at(-1);
+  const text = state.phase === 'WRITE' ? `Round ${state.round}/${state.roundsPerSong}: write the next line! Type !line <your lyric> (${config.writeSeconds}s)`
+    : state.phase === 'VOTE' ? `Vote for the next line: !1 to !${state.shortlist.length} (${config.voteSeconds}s)`
+    : state.phase === 'PLAY' && winner ? `Line ${state.song.length} by @${winner.login} won. Listen!`
+    : state.phase === 'RELEASE' ? `The song is done: "${state.title}". Thanks for writing it, chat!` : '';
+  if (text && twitchRef?.connected()) void twitchRef.sendChat(text);
+}
+
 function broadcast(event: RoundEvent): void {
+  if (event.type === 'STATE') announce(event.state);
   const data = JSON.stringify(event);
   for (const client of wss.clients) if (client.readyState === 1) client.send(data);
 }
@@ -26,7 +41,7 @@ const saveSong = db.prepare(`INSERT INTO songs (id, channel_id, title, style, cr
 
 const engine = new RoundEngine({
   writeSeconds: config.writeSeconds, voteSeconds: config.voteSeconds,
-  roundsPerSong: config.roundsPerSong, maxSongsPerHour: config.maxSongsPerHour,
+  roundsPerSong: config.roundsPerSong, maxSongsPerHour: config.maxSongsPerHour, releaseSeconds: config.releaseSeconds,
   channelId: 'local', channelLogin: config.twitchChannelLogin || 'local',
   judge: new MockLineJudge(), moderation: new MockModeration(), music: new MockMusicProvider(),
   artist: new MockSceneArtist(), voice: new MockVoice(), broadcast,
@@ -37,6 +52,10 @@ const engine = new RoundEngine({
   }),
 });
 const twitch = new TwitchService(engine);
+twitchRef = twitch;
+// listen to chat straight away if an account was connected before (no manual "Start EventSub" after a restart)
+const hasToken = () => Boolean(db.prepare('SELECT 1 FROM twitch_tokens LIMIT 1').get());
+if (hasToken()) void twitch.start().catch((error) => console.error('EventSub autostart failed:', error.message));
 
 app.get('/', (_req, res) => res.redirect('/dashboard'));
 app.get('/dashboard', (_req, res) => res.sendFile(resolve('public/dashboard.html')));
@@ -71,7 +90,7 @@ app.post('/api/simulate', async (req, res) => {
   res.json({ accepted, state: engine.snapshot() });
 });
 app.get('/api/songs', (_req, res) => {
-  const songs = db.prepare('SELECT id, channel_id AS channelId, title, style, created_at AS createdAt, duration_sec AS durationSec, lines_json AS linesJson FROM songs ORDER BY created_at DESC LIMIT 50').all() as Array<Record<string, unknown>>;
+  const songs = db.prepare('SELECT id, channel_id AS channelId, title, style, created_at AS createdAt, duration_sec AS durationSec, audio_url AS audioUrl, lines_json AS linesJson FROM songs ORDER BY created_at DESC LIMIT 50').all() as Array<Record<string, unknown>>;
   res.json(songs.map((song) => ({ ...song, lines: JSON.parse(String(song.linesJson)) })));
 });
 app.get('/auth/login', (_req, res) => {
@@ -101,7 +120,8 @@ app.get('/auth/callback', async (req, res) => {
     db.prepare(`INSERT INTO twitch_tokens (user_id, login, access_token, refresh_token, expires_at, scopes, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET login=excluded.login, access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, scopes=excluded.scopes, updated_at=excluded.updated_at`)
       .run(user.id, user.login, token.access_token, token.refresh_token, Date.now() + token.expires_in * 1000, JSON.stringify(token.scope), Date.now());
-    res.send(`Connected Twitch account @${user.login}. EventSub listener will start when chat integration is enabled.`);
+    void twitch.start().catch((error) => console.error('EventSub start failed:', error.message));
+    res.send(`Connected Twitch account @${user.login}. Listening to chat now. <a href="/dashboard">Back to the dashboard</a>`);
   } catch (error) { res.status(502).send(error instanceof Error ? error.message : 'Twitch connection failed.'); }
 });
 app.get('/song/:id', (req, res) => {

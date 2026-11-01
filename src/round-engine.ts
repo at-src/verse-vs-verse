@@ -16,7 +16,7 @@ export type RoundState = {
   song: CandidateLine[]; clip: MusicClip | null; scenes: SceneSpec[]; title: string;
 };
 type EngineOptions = {
-  writeSeconds: number; voteSeconds: number; roundsPerSong: number; maxSongsPerHour: number;
+  writeSeconds: number; voteSeconds: number; roundsPerSong: number; maxSongsPerHour: number; releaseSeconds?: number;
   channelId: string; channelLogin: string; judge: LineJudge; moderation: Moderation;
   music: MusicProvider; artist: SceneArtist; voice: Voice;
   now?: () => number; broadcast?: (event: RoundEvent) => void;
@@ -32,6 +32,8 @@ export class RoundEngine {
   private readonly usersThisHour = new Set<string>();
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
   private voteTimer: ReturnType<typeof setTimeout> | null = null;
+  private playTimer: ReturnType<typeof setTimeout> | null = null;
+  private releaseTimer: ReturnType<typeof setTimeout> | null = null;
   private roundUsers = new Set<string>();
   private roundVoters = new Set<string>();
   private state: RoundState = {
@@ -54,7 +56,8 @@ export class RoundEngine {
   }
 
   async start(style = 'pop', mood = 'playful'): Promise<void> {
-    if (this.state.phase !== 'IDLE') throw new Error('A song is already in progress');
+    if (this.state.phase !== 'IDLE' && this.state.phase !== 'RELEASE') throw new Error('A song is already in progress');
+    this.clearTimers();
     const hourAgo = this.now() - 60 * 60 * 1000;
     while (this.songTimes.length && this.songTimes[0]! < hourAgo) this.songTimes.shift();
     if (this.songTimes.length >= this.options.maxSongsPerHour) throw new Error('Hourly song limit reached');
@@ -131,10 +134,15 @@ export class RoundEngine {
     scenes.forEach((scene, index) => { const line = newLines[index]; if (line) this.broadcast({ type: 'SCENE', line, scene }); });
     this.broadcast({ type: 'CLIP', clip });
     this.setPhase('PLAY');
+    // the clip plays on the overlay; move on once it has finished (plus a short breath)
+    if (this.playTimer) clearTimeout(this.playTimer);
+    this.playTimer = setTimeout(() => void this.finishPlay(), (clip.durationSec + 1.5) * 1000);
   }
 
   async finishPlay(): Promise<void> {
     if (this.state.phase !== 'PLAY') return;
+    if (this.playTimer) clearTimeout(this.playTimer);
+    this.playTimer = null;
     if (this.state.round >= this.options.roundsPerSong) {
       this.setPhase('RELEASE');
       const clip = await this.options.music.render(this.state.style, this.state.song);
@@ -145,16 +153,21 @@ export class RoundEngine {
       this.broadcast({ type: 'SAVED', songId: id });
       this.broadcast({ type: 'STATE', state: this.snapshot() });
       void this.options.voice.speak(`That was ${this.state.title}!`);
+      // hold the release moment on screen, then go back to IDLE so the next song can start
+      if (this.releaseTimer) clearTimeout(this.releaseTimer);
+      this.releaseTimer = setTimeout(() => { if (this.state.phase === 'RELEASE') this.setPhase('IDLE'); }, (this.options.releaseSeconds ?? 20) * 1000);
       return;
     }
     await this.beginWrite();
   }
 
+  private clearTimers(): void {
+    for (const t of [this.writeTimer, this.voteTimer, this.playTimer, this.releaseTimer]) if (t) clearTimeout(t);
+    this.writeTimer = this.voteTimer = this.playTimer = this.releaseTimer = null;
+  }
+
   stop(): void {
-    if (this.writeTimer) clearTimeout(this.writeTimer);
-    if (this.voteTimer) clearTimeout(this.voteTimer);
-    this.writeTimer = null;
-    this.voteTimer = null;
+    this.clearTimers();
     this.setPhase('IDLE');
   }
 }

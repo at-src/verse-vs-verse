@@ -27,7 +27,7 @@ async function loadHistory() {
   $('history').innerHTML = songs.length ? songs.map((song) => `<div class="history-item"><span><b>${escapeHtml(song.title)}</b><br><small class="muted">${new Date(song.createdAt).toLocaleString()} · ${escapeHtml(song.style)}</small></span><button class="secondary" data-id="${song.id}">Replay</button></div>`).join('') : '<span class="muted">No released songs yet.</span>';
   $('history').querySelectorAll('button').forEach((button) => button.addEventListener('click', async () => {
     const song = songs.find((item) => item.id === button.dataset.id);
-    if (song) { const audio = new Audio(`/media/mock-tone.wav?duration=${song.durationSec}`); await audio.play(); }
+    if (song) { const audio = new Audio(song.audioUrl); await audio.play(); }
   }));
 }
 
