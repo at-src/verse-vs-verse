@@ -9,7 +9,8 @@ export type RoundEvent =
   | { type: 'VOTE_TALLY'; counts: number[] }
   | { type: 'SCENE'; line: CandidateLine; scene: SceneSpec }
   | { type: 'CLIP'; clip: MusicClip }
-  | { type: 'SAVED'; songId: string };
+  | { type: 'SAVED'; songId: string }
+  | { type: 'VOICE'; audioUrl: string };
 export type RoundState = {
   phase: Phase; round: number; roundsPerSong: number; style: string; mood: string;
   deadline: number | null; lines: CandidateLine[]; shortlist: CandidateLine[]; votes: number[];
@@ -92,12 +93,17 @@ export class RoundEngine {
     return true;
   }
 
+  async moderate(text: string): Promise<'ok' | 'blocked'> { return this.options.moderation.check(text); }
+
   async finishWrite(): Promise<void> {
     if (this.state.phase !== 'WRITE') return;
     if (this.writeTimer) clearTimeout(this.writeTimer);
     this.setPhase('SHORTLIST');
-    const shortlist = await this.options.judge.choose(this.state.lines, this.state.song, this.state.style);
-    this.state.shortlist = shortlist.slice(0, 4);
+    let shortlist: CandidateLine[];
+    try { shortlist = await this.options.judge.choose(this.state.lines, this.state.song, this.state.style, this.state.mood); }
+    catch (error) { console.warn('[LineJudge] falling back to mock:', error); shortlist = this.state.lines.slice(0, 4); }
+    const candidates = new Map(this.state.lines.map((line) => [line.text, line]));
+    this.state.shortlist = shortlist.filter((line, index, all) => candidates.has(line.text) && all.findIndex((item) => item.text === line.text) === index).slice(0, 4);
     if (!this.state.shortlist.length) {
       this.state.shortlist = [{ text: 'The room is quiet, but the beat goes on', userId: 'verse-bot', login: 'versebot' }];
     }
@@ -126,7 +132,7 @@ export class RoundEngine {
     this.state.scenes = [];
     const newLines = winner ? [winner] : [];
     const [clip, scenes] = await Promise.all([
-      this.options.music.render(this.state.style, this.state.song),
+      this.options.music.render(this.state.style, this.state.song, this.state.mood),
       Promise.all(newLines.map((line) => this.options.artist.create(line, this.state.mood))),
     ]);
     this.state.clip = clip;
@@ -145,14 +151,19 @@ export class RoundEngine {
     this.playTimer = null;
     if (this.state.round >= this.options.roundsPerSong) {
       this.setPhase('RELEASE');
-      const clip = await this.options.music.render(this.state.style, this.state.song);
+      const clip = await this.options.music.render(this.state.style, this.state.song, this.state.mood, true);
       const id = randomUUID();
+      if (this.options.judge.title) {
+        try { this.state.title = await this.options.judge.title(this.state.song, this.state.style, this.state.mood); }
+        catch (error) { console.warn('[Title] falling back to default:', error); }
+      }
       this.state.clip = clip;
       this.options.saveSong?.({ id, channelId: this.options.channelId, title: this.state.title, style: this.state.style, createdAt: this.now(), clip, lines: [...this.state.song] });
       this.broadcast({ type: 'CLIP', clip });
       this.broadcast({ type: 'SAVED', songId: id });
       this.broadcast({ type: 'STATE', state: this.snapshot() });
-      void this.options.voice.speak(`That was ${this.state.title}!`);
+      const voiceUrl = await this.options.voice.speak(`That was ${this.state.title}!`);
+      if (voiceUrl) this.broadcast({ type: 'VOICE', audioUrl: voiceUrl });
       // hold the release moment on screen, then go back to IDLE so the next song can start
       if (this.releaseTimer) clearTimeout(this.releaseTimer);
       this.releaseTimer = setTimeout(() => { if (this.state.phase === 'RELEASE') this.setPhase('IDLE'); }, (this.options.releaseSeconds ?? 20) * 1000);

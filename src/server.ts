@@ -5,7 +5,8 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { db } from './db.js';
-import { MockLineJudge, MockModeration, MockMusicProvider, MockSceneArtist, MockVoice } from './adapters/mock.js';
+import { MockSceneArtist } from './adapters/mock.js';
+import { OpenCompatibleJudge, PascalProvider, RealModeration } from './adapters/real.js';
 import { RoundEngine, type RoundEvent, type RoundState, type CandidateLine } from './round-engine.js';
 import { TwitchService } from './twitch.js';
 
@@ -43,8 +44,8 @@ const engine = new RoundEngine({
   writeSeconds: config.writeSeconds, voteSeconds: config.voteSeconds,
   roundsPerSong: config.roundsPerSong, maxSongsPerHour: config.maxSongsPerHour, releaseSeconds: config.releaseSeconds,
   channelId: 'local', channelLogin: config.twitchChannelLogin || 'local',
-  judge: new MockLineJudge(), moderation: new MockModeration(), music: new MockMusicProvider(),
-  artist: new MockSceneArtist(), voice: new MockVoice(), broadcast,
+  judge: new OpenCompatibleJudge(), moderation: new RealModeration(), music: new PascalProvider(),
+  artist: new MockSceneArtist(), voice: new PascalProvider(), broadcast,
   saveSong: (song) => saveSong.run({
     id: song.id, channelId: song.channelId, title: song.title, style: song.style,
     createdAt: song.createdAt, audioUrl: song.clip.audioUrl, durationSec: song.clip.durationSec,
@@ -62,6 +63,10 @@ app.get('/dashboard', (_req, res) => res.sendFile(resolve('public/dashboard.html
 app.get('/overlay', (_req, res) => res.sendFile(resolve('public/overlay.html')));
 app.get('/api/state', (_req, res) => res.json(engine.snapshot()));
 app.get('/api/config', (_req, res) => res.json({ writeSeconds: config.writeSeconds, voteSeconds: config.voteSeconds, roundsPerSong: config.roundsPerSong }));
+app.get('/api/twitch/status', (_req, res) => {
+  const account = db.prepare("SELECT user_id AS id, login FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as { id: string; login: string } | undefined;
+  res.json({ connected: Boolean(account), account: account?.login ?? null, eventSub: twitch.connected() });
+});
 app.get('/api/twitch/status', (_req, res) => {
   const account = db.prepare('SELECT user_id AS id, login FROM twitch_tokens ORDER BY updated_at DESC LIMIT 1').get() as { id: string; login: string } | undefined;
   res.json({ connected: Boolean(account), account: account?.login ?? null });
@@ -147,6 +152,12 @@ app.get('/media/mock-tone.wav', (_req, res) => {
     wav.writeInt16LE(Math.max(-1, Math.min(1, tone * envelope)) * 32767, 44 + i * 2);
   }
   res.type('audio/wav').send(wav);
+});
+
+app.get('/media/:file', (req, res) => {
+  const file = String(req.params.file);
+  if (!/^[a-f0-9-]+\.(wav|mp3|audio)$/i.test(file)) return res.sendStatus(404);
+  res.sendFile(resolve('data/media', file));
 });
 
 const staticRoot = resolve('public');

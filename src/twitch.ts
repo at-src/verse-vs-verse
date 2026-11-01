@@ -1,7 +1,8 @@
 import WebSocket from 'ws';
 import { db } from './db.js';
-import { config } from './config.js';
+import { applyActorPersona } from './identity.js';
 import type { RoundEngine } from './round-engine.js';
+import { config } from './config.js';
 
 type TokenRow = { user_id: string; login: string; access_token: string; refresh_token: string; expires_at: number };
 type EventEnvelope = { metadata: { message_type: string; subscription_type?: string }; payload: Record<string, any> };
@@ -16,7 +17,7 @@ export class TwitchService {
   constructor(private readonly engine: RoundEngine) {}
 
   private token(): TokenRow | undefined {
-    return db.prepare('SELECT * FROM twitch_tokens ORDER BY updated_at DESC LIMIT 1').get() as TokenRow | undefined;
+    return db.prepare("SELECT * FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as TokenRow | undefined;
   }
 
   private async accessToken(): Promise<TokenRow> {
@@ -43,7 +44,7 @@ export class TwitchService {
   }
 
   async sendChat(text: string): Promise<void> {
-    const token = this.token();
+    const token = db.prepare("SELECT * FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as TokenRow | undefined;
     if (!token) return;
     const response = await this.helix('chat/messages', { method: 'POST', body: JSON.stringify({ broadcaster_id: token.user_id, sender_id: token.user_id, message: text.slice(0, 500) }) });
     if (!response.ok) console.error(`Twitch chat send failed (${response.status})`);
@@ -102,8 +103,9 @@ export class TwitchService {
       const userId = String(message.chatter_user_id ?? login);
       const text = String(message.message?.text ?? '');
       // no reply per line or vote (spam and rate limits); the server announces each phase once instead
-      if (text.toLowerCase().startsWith('!line ')) await this.engine.submitLine({ text: text.slice(6), login, userId });
-      else if (/^![1-4]$/.test(text.trim())) this.engine.vote(userId, Number(text.trim().slice(1)) - 1);
+      const credited = applyActorPersona(login, userId, text, config.demoActorLogins);
+      if (credited.text.toLowerCase().startsWith('!line ')) await this.engine.submitLine({ text: credited.text.slice(6), login: credited.login, userId: credited.userId });
+      else if (/^![1-4]$/.test(credited.text.trim())) this.engine.vote(credited.userId, Number(credited.text.trim().slice(1)) - 1);
     }
   }
 }

@@ -1,8 +1,11 @@
 import type { CandidateLine, LineJudge, Moderation, MusicClip, MusicProvider, SceneArtist, SceneSpec, Voice } from './types.js';
 
 export class MockLineJudge implements LineJudge {
-  async choose(lines: CandidateLine[]): Promise<CandidateLine[]> {
+  async choose(lines: CandidateLine[], _songSoFar: CandidateLine[] = [], _style = 'pop', _mood = 'playful'): Promise<CandidateLine[]> {
     return lines.slice(0, 4);
+  }
+  async title(lines: CandidateLine[]): Promise<string> {
+    return lines.length ? lines[0]!.text.split(/\s+/).slice(0, 4).join(' ') : 'The Chat Song';
   }
 }
 
@@ -13,7 +16,7 @@ export class MockModeration implements Moderation {
 }
 
 export class MockMusicProvider implements MusicProvider {
-  async render(_style: string, lines: CandidateLine[]): Promise<MusicClip> {
+  async render(_style: string, lines: CandidateLine[], _mood = 'playful', _release = false): Promise<MusicClip> {
     const words = lines.flatMap((line) => line.text.split(/\s+/));
     const durationSec = Math.max(4, words.length * 0.42);
     return {
@@ -40,5 +43,5 @@ export class MockSceneArtist implements SceneArtist {
 }
 
 export class MockVoice implements Voice {
-  async speak(): Promise<string | null> { return null; }
+  async speak(_text: string): Promise<string | null> { return null; }
 }

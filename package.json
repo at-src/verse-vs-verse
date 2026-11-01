@@ -8,7 +8,8 @@
     "start": "tsx src/server.ts",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "demo:chat": "tsx scripts/chat-actors.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",

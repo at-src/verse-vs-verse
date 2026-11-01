@@ -9,6 +9,7 @@ ws.onmessage = ({ data }) => {
   if (event.type === 'STATE') { state = event.state; render(); }
   if (event.type === 'SCENE') renderScene($('scene'), event.scene);
   if (event.type === 'CLIP') play(event.clip);
+  if (event.type === 'VOICE') { const voice = new Audio(event.audioUrl); voice.play().catch(() => undefined); }
 };
 fetch('/api/state').then((res) => res.json()).then((value) => { state = value; render(); });
 
