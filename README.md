@@ -8,7 +8,6 @@ Built for the Codex x TwitchCon Hackathon with OpenAI Codex.
 
 ![Verse vs Verse live on Twitch](docs/screens/05-twitch-live.jpg)
 
-![The scenes follow the lyrics](docs/screens/03-crown.jpg)
 
 ## Who it is for
 
