@@ -8,16 +8,17 @@ export function renderSceneSvg(scene,{line=scene.line??scene.keyword,words=[],ti
   const stars=dark?Array.from({length:14},(_,i)=>`<circle cx="${40+(i*137)%720}" cy="${24+(i*47)%135}" r="${i%3+2}" fill="${PALETTE.yellow}"/>`).join(''):'';
   const octaves=quality==='export'?1:2;
   const filter=quality==='export'?'<filter id="clay" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="1" seed="7" result="n"/><feComponentTransfer in="n" result="texture"><feFuncR type="linear" slope=".12" intercept=".44"/><feFuncG type="linear" slope=".12" intercept=".44"/><feFuncB type="linear" slope=".12" intercept=".44"/></feComponentTransfer><feBlend in="SourceGraphic" in2="texture" mode="soft-light"/></filter>':`<filter id="clay" x="-15%" y="-15%" width="130%" height="130%"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="${octaves}" seed="7" result="n"/><feDiffuseLighting in="n" lighting-color="#fff" surfaceScale="1.4" result="l"><feDistantLight azimuth="225" elevation="58"/></feDiffuseLighting><feComposite in="l" in2="SourceGraphic" operator="in" result="t"/><feBlend in="SourceGraphic" in2="t" mode="multiply" result="b"/><feDropShadow dx="4" dy="7" stdDeviation="5" flood-color="#5a4a3a" flood-opacity=".3"/></filter>`;
-  const layerFilter=quality==='export'?'':' filter="url(#clay)"';
-  const backdrop=`<g${layerFilter}><rect width="800" height="450" fill="${MOODS[safe.mood]}"/>${stars}</g>`;
-  const ground=safe.ground?`<g${layerFilter}><path d="M0 354 Q190 317 360 360 T800 344 V450 H0Z" fill="#7cbf6a"/></g>`:'';
+  const layerFilter=' filter="url(#clay)"';
+  // Keep palette surfaces flat and exact; clay lighting belongs on foreground objects.
+  const backdrop=`<rect width="800" height="450" fill="${MOODS[safe.mood]}"/>${stars}`;
+  const ground=safe.ground?`<path d="M0 354 Q190 317 360 360 T800 344 V450 H0Z" fill="#7cbf6a"/>`:'';
   const props=safe.props.map((prop,i)=>renderProp(prop,i,local,quality)).join('');
   const mascot=mascotSvg(interlude?{...safe.mascot,pose:'lookup'}:safe.mascot,safe.mood,local,quality);
   const labels=renderLine(line,words,time,ink,safe.keyword);
   const title=`<g${layerFilter}><text x="400" y="196" text-anchor="middle" fill="${ink}" font-family="Chewy" font-size="54" font-weight="400" class="keyword">${escapeXml(safe.keyword.toUpperCase())}</text></g>`;
-  const foreground=quality==='export'?`${props}${mascot}${title}<g>${labels}</g>`:`${props}${mascot}${title}<g filter="url(#clay)">${labels}</g>`;
+  const foreground=`${props}${mascot}${title}<g filter="url(#clay)">${labels}</g>`;
   const cameraTime=Math.max(0,time-cameraStart);const drift=interlude?Math.sin(cameraTime*.42)*8:0;const scale=interlude?1.018:1;
-  const content=quality==='export'?`<g filter="url(#clay)">${backdrop.replace(/<g>\s*|<\/g>/g,'')}${ground.replace(/<g>\s*|<\/g>/g,'')}${foreground}</g>`:`${backdrop}${ground}${foreground}`;
+  const content=`${backdrop}${ground}${foreground}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" role="img"><defs>${filter}<clipPath id="scene-canvas"><rect width="800" height="450"/></clipPath></defs><g transform="translate(${drift.toFixed(2)} 0) translate(400 225) scale(${scale}) translate(-400 -225)" clip-path="url(#scene-canvas)">${content}</g></svg>`;
 }
 

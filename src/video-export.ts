@@ -7,6 +7,8 @@ import { fallbackScene } from './scenes.js';
 
 export type VideoScene = { lineKey: string; scene: SceneSpec; line: CandidateLine; start: number; end: number; words: MusicClip['words'] };
 export type VideoFrame = { entry: VideoScene; sceneStart: number; cameraStart: number; interlude: boolean };
+export const VIDEO_INTRO_SECONDS = 2;
+export const VIDEO_CREDITS_SECONDS = 3;
 export const VIDEO_EXPORT_TIMEOUT_MS = 10 * 60 * 1000;
 let exportTail: Promise<unknown> = Promise.resolve();
 
@@ -38,6 +40,7 @@ export async function exportMusicVideo(songId: string, title: string, audioPath:
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/frame') { res.setHeader('content-type','text/html'); res.end(exportPageHtml()); return; }
     if (url.pathname === '/scene-renderer.js') { res.setHeader('content-type','text/javascript'); res.end(await import('node:fs/promises').then(fs => fs.readFile(resolve('public/scene-renderer.js')))); return; }
+    if (url.pathname === '/fonts/Chewy-Regular.ttf') { res.setHeader('content-type','font/ttf'); res.end(await import('node:fs/promises').then(fs => fs.readFile(resolve('public/fonts/Chewy-Regular.ttf')))); return; }
     res.writeHead(404).end();
   }));
   server = httpServer;
