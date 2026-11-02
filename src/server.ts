@@ -16,8 +16,11 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 app.use(express.json());
-const oauthStates = new Map<string, number>();
-const scopes = ['user:read:chat', 'user:write:chat', 'channel:read:redemptions', 'moderator:read:followers'];
+const oauthStates = new Map<string, { expiresAt: number; actor: boolean }>();
+// channel:read:stream_key lets the dashboard go live without the streamer copying their key around
+const scopes = ['user:read:chat', 'user:write:chat', 'channel:read:redemptions', 'moderator:read:followers', 'channel:read:stream_key'];
+// rehearsal / load-test accounts only need to post chat; they are stored apart so they never replace the broadcaster
+const actorScopes = ['user:write:chat'];
 function normalizeLine(text: string): string { return text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); }
 
 let lastPhase = 'IDLE';
@@ -164,20 +167,22 @@ app.get('/api/songs', (_req, res) => {
   const songs = db.prepare('SELECT id, channel_id AS channelId, title, style, created_at AS createdAt, duration_sec AS durationSec, audio_url AS audioUrl, video_url AS videoUrl, video_status AS videoStatus, release_status AS releaseStatus, release_error AS releaseError, fidelity_score AS fidelityScore, lines_json AS linesJson FROM songs ORDER BY created_at DESC LIMIT 50').all() as Array<Record<string, unknown>>;
   res.json(songs.map((song) => ({ ...song, lines: JSON.parse(String(song.linesJson)) })));
 });
-app.get('/auth/login', (_req, res) => {
+app.get('/auth/login', (req, res) => {
   if (!config.twitchClientId || !config.twitchClientSecret) return res.status(503).send('Set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET in .env first.');
+  const actor = req.query.actor === '1';
   const state = randomBytes(24).toString('hex');
-  oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+  oauthStates.set(state, { expiresAt: Date.now() + 10 * 60 * 1000, actor });
   const url = new URL('https://id.twitch.tv/oauth2/authorize');
   url.searchParams.set('client_id', config.twitchClientId); url.searchParams.set('redirect_uri', config.twitchRedirectUri);
-  url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', scopes.join(' ')); url.searchParams.set('state', state);
+  url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', (actor ? actorScopes : scopes).join(' ')); url.searchParams.set('state', state);
+  if (actor) url.searchParams.set('force_verify', 'true'); // show the account picker instead of silently reusing the streamer's session
   res.redirect(url.toString());
 });
 app.get('/auth/callback', async (req, res) => {
   const state = String(req.query.state ?? '');
-  const expiresAt = oauthStates.get(state);
+  const pending = oauthStates.get(state);
   oauthStates.delete(state);
-  if (!state || !expiresAt || expiresAt < Date.now()) return res.status(400).send('OAuth state is invalid or expired. Restart from /auth/login.');
+  if (!state || !pending || pending.expiresAt < Date.now()) return res.status(400).send('OAuth state is invalid or expired. Restart from /auth/login.');
   if (req.query.error) return res.status(400).send(`Twitch authorization failed: ${String(req.query.error_description ?? req.query.error)}`);
   try {
     const tokenResponse = await fetch('https://id.twitch.tv/oauth2/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: config.twitchClientId, client_secret: config.twitchClientSecret, code: String(req.query.code ?? ''), grant_type: 'authorization_code', redirect_uri: config.twitchRedirectUri }) });
@@ -188,6 +193,14 @@ app.get('/auth/callback', async (req, res) => {
     const userData = await userResponse.json() as { data: Array<{ id: string; login: string }> };
     const user = userData.data[0];
     if (!user) return res.status(502).send('Twitch did not return an account.');
+    if (pending.actor) {
+      const broadcaster = db.prepare("SELECT user_id FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as { user_id: string } | undefined;
+      if (broadcaster?.user_id === user.id) return res.status(400).send(`@${user.login} is the streamer account. Log in as the test account instead (use a private window, or "Not you?" on the Twitch page).`);
+      db.prepare(`INSERT INTO twitch_tokens (user_id, login, access_token, refresh_token, expires_at, scopes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET login=excluded.login, access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, scopes=excluded.scopes, updated_at=excluded.updated_at`)
+        .run(`demo-actor:${user.id}`, user.login, token.access_token, token.refresh_token, Date.now() + token.expires_in * 1000, JSON.stringify(token.scope), Date.now());
+      return res.send(`Added @${user.login} as a rehearsal chat account. You can close this tab.`);
+    }
     db.prepare(`INSERT INTO twitch_tokens (user_id, login, access_token, refresh_token, expires_at, scopes, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET login=excluded.login, access_token=excluded.access_token, refresh_token=excluded.refresh_token, expires_at=excluded.expires_at, scopes=excluded.scopes, updated_at=excluded.updated_at`)
       .run(user.id, user.login, token.access_token, token.refresh_token, Date.now() + token.expires_in * 1000, JSON.stringify(token.scope), Date.now());
