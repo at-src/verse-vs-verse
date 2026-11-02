@@ -126,7 +126,8 @@ export class PascalProvider implements MusicProvider {
     const model = release ? config.pascalReleaseModel : config.pascalMusicModel;
     const long = release;
     const descriptor = config.genres[style] ?? `${style} music`;
-    const prompt = `${style}, ${descriptor}, ${mood}; sing only the supplied lyrics exactly as written and in order. Do not add, repeat, paraphrase, or invent words, verses, hooks, or vocalizations. No new lyrics. Vocals start immediately; an instrumental outro is allowed.${strict?' Strict take: perform only the exact supplied lines, once each, in order; no ad-libs or extra vocals.':''}`;
+    // tested on 10 real renders (clip + pro): with this wording and no section tags Lyria invented 0 lines; with tags it invented 40-80% of the release
+    const prompt = `${style}, ${descriptor}, ${mood}; vocals start immediately. Sing ONLY the provided lyrics, word for word, in order. Do not add, change or invent any words, ad-libs or backing vocal phrases. Repeat the provided lines if time remains, then an instrumental outro.${strict?' Strict take: no extra vocals of any kind beyond the provided lines.':''}`;
     const duration = long ? 30 : 10;
     const job = await this.requestJson<PascalJob>('/music', { model, prompt, lyrics, duration_seconds: duration, bpm: 100 });
     const finished = await this.pollJob(job);
@@ -141,13 +142,15 @@ export class PascalProvider implements MusicProvider {
     const mediaDir = resolve('data/media'); await mkdir(mediaDir, { recursive: true });
     await writeFile(resolve(mediaDir, fileName), bytes);
     const durationSec = await measureDuration(bytes, ext, resolve(mediaDir, fileName));
-    const lyricsLines = alignLyricLines(lines, finished.result?.lyrics_lines, durationSec);
+    const sung = fillSegmentStarts(finished.result?.lyrics_lines ?? [], durationSec);
+    const lyricsLines = alignLyricLines(lines, sung, durationSec);
     const words = lyricsLines.flatMap((line) => spreadLineWords(line.text, line.start, line.end));
-    const timings = await this.transcribe(bytes, fileName, ext).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; });
-    const fidelityScore = scoreSungFidelity(lines, timings ?? []);
+    // fidelity comes from Lyria's own lyrics_lines (accurate in tests); whisper adds words like "you" at the end of songs
+    const fidelityScore = Math.min(scoreSungFidelity(lines, sung.flatMap((item) => item.text.split(/\s+/).map((word) => ({ word, start: item.start, end: item.end })))), chatLineShare(lines, sung));
     console.info(`[Music fidelity] job_id=${finished.id} score=${fidelityScore.toFixed(3)} strict=${strict}`);
-    const sungSegments=(finished.result?.lyrics_lines??[]).map((item,index,all)=>({text:item.text,start:item.start,end:item.end??all[index+1]?.start??durationSec}));
-    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments, words: refineTimings(words, timings), fidelityScore, isMock:false };
+    // speech-to-text only refines word timing for the release (music video); round clips play straight away
+    const timings = release ? await this.transcribe(bytes, fileName, ext).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; }) : null;
+    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words: refineTimings(words, timings), fidelityScore, isMock:false };
   }
 
   private async pollJob(initial: PascalJob): Promise<PascalJob> {
@@ -156,7 +159,7 @@ export class PascalProvider implements MusicProvider {
     for (let i = 0; job.status !== 'succeeded' && i < 120; i += 1) {
       if (!job.id) throw new Error('Pascal returned an incomplete job object');
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 1500));
-      job = await this.requestJson<PascalJob>(`/jobs/${encodeURIComponent(job.id)}`);
+      job = await this.requestJson<PascalJob>(`/music/${encodeURIComponent(job.id)}`); // /jobs/{id} returns 403 studio_session_required for API keys
       if (job.status === 'failed') throw new PascalFailure(job.error_code??'failed',job.id,job.error_message??'Pascal job failed');
     }
     if (job.status !== 'succeeded') throw new PascalFailure('job_timeout',job.id,'Pascal job timed out');
@@ -227,9 +230,29 @@ function ttsParams(schema: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
+// plain lines, no [Verse]/[Chorus] tags: section tags invite Lyria to write the rest of the section itself
 export function formatLyrics(lines: CandidateLine[], _strict = false): string {
-  const sections = ['[Verse 1]', '[Verse 2]', '[Bridge]', '[Verse 3]'];
-  return lines.map((line, index) => `${sections[index] ?? `[Verse ${index + 1}]`}\n${line.text}`).join('\n');
+  return lines.map((line) => line.text.trim()).join('\n');
+}
+// lyria-3-pro-preview only puts `start` on the first line of each section and never sends `end`; spread the rest evenly
+export function fillSegmentStarts(raw: Array<{ text: string; start?: number; end?: number }>, duration: number): Array<{ text: string; start: number; end: number }> {
+  const items = raw.filter((item) => item.text?.trim());
+  const starts = items.map((item) => (typeof item.start === 'number' && Number.isFinite(item.start) ? Math.max(0, Math.min(duration, item.start)) : undefined));
+  for (let i = 0; i < starts.length; i++) {
+    if (starts[i] !== undefined) continue;
+    let prev = i - 1; while (prev >= 0 && starts[prev] === undefined) prev--;
+    let next = i + 1; while (next < starts.length && starts[next] === undefined) next++;
+    const left = prev >= 0 ? starts[prev]! : 0, right = next < starts.length ? starts[next]! : duration;
+    starts[i] = left + (right - left) * (i - prev) / (next - prev);
+  }
+  return items.map((item, i) => ({ text: item.text, start: starts[i]!, end: typeof item.end === 'number' ? item.end : starts[i + 1] ?? duration }));
+}
+// share of sung lines that are (close to) a chat line; catches lyrics Lyria invented
+export function chatLineShare(lines: CandidateLine[], sung: Array<{ text: string }>): number {
+  const vocal = sung.filter((item) => normalize(item.text).length > 0 && !/^\(.*\)$/.test(item.text.trim()));
+  if (!vocal.length) return 1;
+  const chat = lines.map((line) => normalize(line.text));
+  return vocal.filter((item) => chat.some((text) => similarity(text, normalize(item.text)) >= 0.7)).length / vocal.length;
 }
 
 export function scoreSungFidelity(lines:CandidateLine[],transcript:TimedWord[]):number{
