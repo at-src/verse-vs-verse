@@ -9,7 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "demo:chat": "tsx scripts/chat-actors.ts"
+    "demo:chat": "tsx scripts/chat-actors.ts",
+    "broadcast": "tsx scripts/broadcast.ts",
+    "rehearse": "tsx scripts/rehearse.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",

@@ -1,0 +1,12 @@
+{
+  "style": "pop",
+  "mood": "playful",
+  "settings": { "writeSeconds": 25, "voteSeconds": 18, "roundsPerSong": 4, "loopMode": false },
+  "opener": [{ "from": "expressive_guy", "text": "!help" }],
+  "rounds": [
+    { "lines": { "expressive_guy": "my cat just rage quit the final boss", "skylake5": "my dog ate the headset again" }, "vote": "expressive_guy" },
+    { "lines": { "expressive_guy": "a ghost just followed the stream", "skylake5": "the robot in chat learned how to love" }, "vote": "expressive_guy" },
+    { "lines": { "skylake5": "crown me king of the lobby tonight", "expressive_guy": "we hit the trophy at 3am" }, "vote": "skylake5" },
+    { "lines": { "skylake5": "we were dancing on the moon tonight", "expressive_guy": "pizza in one hand, controller in the other" }, "vote": "skylake5" }
+  ]
+}

@@ -200,7 +200,8 @@ export class RoundEngine {
   }
 
   private async produceRelease(retry:boolean):Promise<void>{
-    if(!retry){this.setPhase('RELEASE');this.releaseSongId=randomUUID();this.state.clip=null;this.state.clipError=null;}
+    // clear the last round's clip before announcing RELEASE, so no one mistakes it for the release song
+    if(!retry){this.state.clip=null;this.state.clipError=null;this.releaseSongId=randomUUID();this.setPhase('RELEASE');}
     this.state.releaseFailed=false;this.state.musicRetrying=false;
     if(this.releaseTimer)clearTimeout(this.releaseTimer);
     try{
