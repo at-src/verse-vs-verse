@@ -1,4 +1,5 @@
-import { renderScene } from './scene-renderer.js';
+import { renderScene, renderTransitionSvg, TRANSITION_SECONDS } from './scene-renderer.js';
+let shown=null,fading=null;
 
 const $=(id)=>document.getElementById(id);
 let state;let activeClip=null;let audioStartedFor=null;let animationFrame=0;
@@ -81,7 +82,16 @@ function driveAnimation(){
     }else if(state.song.length){
       const shotStart=Math.floor(currentTime/8)*8;line=state.song[Math.floor(currentTime/8)%state.song.length];scene=getScene(line);sceneStart=shotStart;cameraStart=shotStart;interlude=true;
     }
-    if(scene)renderScene($('scene'),scene,{line:interlude?'':line?.text??'',words,time:currentTime,sceneStart,cameraStart,interlude,bpm:activeClip.bpm??100});
+    if(scene){
+      const options={line:interlude?'':line?.text??'',words,time:currentTime,sceneStart,cameraStart,interlude,bpm:activeClip.bpm??100};
+      const key=`${lineKey(line)}|${cameraStart}|${interlude}`;
+      // crossfade when the shot changes instead of a hard cut
+      if(shown&&shown.key!==key){fading={from:shown,at:currentTime};}
+      if(fading&&(currentTime-fading.at>=TRANSITION_SECONDS||currentTime<fading.at))fading=null;
+      if(fading){const age=currentTime-fading.at;$('scene').innerHTML=renderTransitionSvg({scene,options},{scene:fading.from.scene,options:{...fading.from.options,time:fading.from.options.time+age}},age/TRANSITION_SECONDS);}
+      else renderScene($('scene'),scene,options);
+      shown={key,scene,options};
+    }
     if(state.phase==='PLAY'){
       const lastEnd=activeClip.lineTimings?.at(-1)?.end??activeClip.words.at(-1)?.end??activeClip.durationSec;
       if(currentTime>=lastEnd+2){player.pause();return;}

@@ -131,6 +131,13 @@ function inferExpression(line,pose){const s=String(line).toLowerCase();
 function inferAction(line,keyword){const s=(line+' '+keyword).toLowerCase();if(/danc|groov|party/.test(s))return'dance';if(/sing|song|music|mic|guitar/.test(s))return'sing';if(/jump|rocket|fly|soar/.test(s))return'jump';if(/yay|win|crown|champion|fire in the chat/.test(s))return'cheer';if(/surpris|ghost|boo|shock/.test(s))return'surprised';if(/sleep|tired|dream|midnight/.test(s))return'sleepy';if(/point|look|see|watch|stole/.test(s))return'point';if(/hold|cup|mug|controller|phone|book/.test(s))return'hold';if(/why|huh|confus|homework/.test(s))return'shrug';return'idle';}
 function clean(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');}function escapeXml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));}function num(v,d){const n=Number(v);return Number.isFinite(n)?n:d;}function clamp(v,a,b){return Math.max(a,Math.min(b,num(v,0)));}
 export function renderScene(container,scene,options={}){container.innerHTML=renderSceneSvg(scene,options);return container.querySelector('svg');}
+// shot change: the outgoing shot fades out over the incoming one with a gentle push-in (eased, ~0.5 s)
+export const TRANSITION_SECONDS=.55;
+export function renderTransitionSvg(current,previous,progress){
+  const t=Math.max(0,Math.min(1,progress)),e=t*t*(3-2*t);
+  const incoming=renderSceneSvg(current.scene,current.options),outgoing=renderSceneSvg(previous.scene,previous.options);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450"><g>${incoming}</g><g opacity="${(1-e).toFixed(3)}" transform="translate(400 225) scale(${(1+e*.07).toFixed(4)}) translate(-400 -225)">${outgoing}</g></svg>`;
+}
 
 // Exposed for preview pages and renderer tests without duplicating the prop catalog.
 export const clayPropNames=Object.freeze(Object.keys(LIB));

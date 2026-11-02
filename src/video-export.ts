@@ -9,6 +9,7 @@ export type VideoScene = { lineKey: string; scene: SceneSpec; line: CandidateLin
 export type SungSegment = {text:string;start:number;end?:number;words?:MusicClip['words']};
 export type VideoFrame = { entry: VideoScene; sceneStart: number; cameraStart: number; interlude: boolean };
 export const VIDEO_INTRO_SECONDS = 2;
+const TRANSITION = 0.55; // keep in step with TRANSITION_SECONDS in public/scene-renderer.js
 export const VIDEO_CREDITS_SECONDS = 3;
 export const VIDEO_EXPORT_TIMEOUT_MS = 10 * 60 * 1000;
 let exportTail: Promise<unknown> = Promise.resolve();
@@ -89,7 +90,11 @@ export async function exportMusicVideo(songId: string, title: string, audioPath:
   const output=resolve(media,`${songId}.mp4`);
   ffmpeg=spawnProcess(ffmpegPath,['-y','-f','image2pipe','-framerate',String(fps),'-vcodec','mjpeg','-i','pipe:0','-itsoffset','2','-i',audioPath,'-af','apad=pad_dur=3','-t',String(duration+5),'-vf','scale=1280:720','-c:v','libx264','-pix_fmt','yuv420p','-r',String(fps),'-c:a','aac',output],{stdio:['pipe','ignore','pipe']});
   const ffmpegDone=waitChild(ffmpeg); ffmpegDone.catch(()=>undefined);
-    const frameData=(frame:number)=>{const outputTime=frame/fps;if(outputTime<2)return{card:'intro',title,channelName:scenes[0]?.channelName};if(outputTime>=duration+2)return{card:'credits',title,credits:[...new Set(scenes.map(scene=>'@'+scene.line.login))].join(', ')};const time=outputTime-2;const selected=selectVideoFrame(time,scenes);const entry=selected?.entry;return{scene:entry?.scene??emptyScene(title),line:selected?.interlude?'':entry?.line.text??title,words:selected?.interlude?[]:entry?.words??[],time,sceneStart:selected?.sceneStart??0,cameraStart:selected?.cameraStart??0,interlude:selected?.interlude??false};};
+    const frameData=(frame:number)=>{const outputTime=frame/fps;if(outputTime<2)return{card:'intro',title,channelName:scenes[0]?.channelName};if(outputTime>=duration+2)return{card:'credits',title,credits:[...new Set(scenes.map(scene=>'@'+scene.line.login))].join(', ')};const time=outputTime-2;const shot=(t:number)=>{const selected=selectVideoFrame(t,scenes);const entry=selected?.entry;return{key:`${entry?.lineKey}|${selected?.cameraStart}`,scene:entry?.scene??emptyScene(title),line:selected?.interlude?'':entry?.line.text??title,words:selected?.interlude?[]:entry?.words??[],time:t,sceneStart:selected?.sceneStart??0,cameraStart:selected?.cameraStart??0,interlude:selected?.interlude??false};};
+      // crossfade from the previous shot for the first TRANSITION seconds of a new one
+      const now=shot(time);const startOfShot=Math.max(now.sceneStart,now.cameraStart);const age=time-startOfShot;
+      if(age>=0&&age<TRANSITION&&startOfShot>0.05){const before=shot(startOfShot-0.04);if(before.key!==now.key)return{...now,prev:{...before,time:startOfShot-0.04+age},progress:age/TRANSITION};}
+      return now;};
     const drawFrame=(frame:number)=>Runtime.evaluate({expression:`window.draw(${JSON.stringify(frameData(frame))})`,awaitPromise:true});
     const queuedFrames:Array<{data:string;sessionId:number}> = [];let nextFrameResolve:((frame:{data:string;sessionId:number})=>void)|null=null;
     Page.screencastFrame((frame:{data:string;sessionId:number})=>{if(nextFrameResolve){const resolveFrame=nextFrameResolve;nextFrameResolve=null;resolveFrame(frame);}else queuedFrames.push(frame);});
