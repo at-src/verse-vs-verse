@@ -1,78 +1,64 @@
 # Verse vs Verse
 
-Chat writes a song one line at a time. The app runs with local mock adapters when provider keys are missing or a request fails. Real chat audio, judging, moderation, and scripted demo actors can be enabled independently.
+**Twitch chat writes a song, live.** Viewers type lyric lines, an AI judge shortlists them, chat votes, and the winning line is sung by an AI band within about 12 seconds. Each round adds a line and the whole song so far plays on stream, with every line drawn as its own animated clay scene and karaoke lyrics. When the song is done, the app can render a music video with per-line writer credits.
 
-Each winning line becomes an animated clay scene following `skills/clay-scenes/SKILL.md`. The final song gets an MP4 music video in the background and a share page with lyrics and writer credits.
+Built for the Codex x TwitchCon Hackathon with OpenAI Codex.
 
-## Requirements and run
+- Demo video: _(YouTube link)_
+- Runs on real Twitch: EventSub chat in, Helix chat out, an OBS browser-source overlay, and an optional headless "go live" broadcaster.
 
-- Node.js 22
-- npm
+## How a song works
+
+| Phase | What viewers see | Chat |
+|---|---|---|
+| WRITE (default 45 s) | "Drop your line." Each new line appears with its author | `!line <your lyric>` (one per viewer per round) |
+| VOTE (30 s) | The AI judge's shortlist with live vote counts; the bot lists the options in chat | `!1` `!2` `!3` `!4` |
+| PRODUCE (~12 s) | The winning line and its author while the AI band records it | |
+| PLAY (~30 s) | The song so far, sung word for word, with a clay scene per line | |
+| RELEASE | The finished song with its title and credits; link to the song page | `!song` |
+
+Also: `!help`, `!queue`, and `!skip` (broadcaster or mod). Lines are checked (length, links, spam, OpenAI moderation) before they reach the stream.
+
+## Design
+
+- **One model API for audio (Pascal).** Music, speech-to-text and stems go through one OpenAI-style API, so the music model can be swapped without code changes (`PASCAL_MUSIC_MODEL`). The default clip model returns per-line timings, which drive the karaoke and the scene changes.
+- **Chat's exact words.** Lyrics are sent as plain lines with a strict prompt. In tests, section tags made the model invent 40–80% of a song; the strict prompt invented 0 lines in 10 renders. Each clip gets a fidelity score.
+- **Clay scenes as code.** An LLM plans each scene as JSON (keyword, mood, mascot pose, props picked by name from a hand-built SVG library). `public/scene-renderer.js` draws every frame: mascot poses, a dance on the beat, mouth movement only on sung words, expression from the lyric, props with their own motion, camera moves and karaoke lyrics. The same renderer drives the live overlay and the video export. The style lives in `skills/clay-scenes/` (SKILL.md, palette, 41 props).
+- **Lyric sync.** For longer renders, `src/lyric-sync.ts` aligns chat's lines to a word-level transcript (every repeat, real word times) and the release is trimmed after two full passes.
+- **Never fake a song.** If a render fails, the app retries, tells chat, and keeps the winning line; a placeholder tone is never saved as a song.
+
+## Run it
+
+Requirements: Node.js 22, ffmpeg, Chrome (for video export and the headless broadcaster).
 
 ```powershell
 npm install
-Copy-Item .env.example .env
+Copy-Item .env.example .env   # add keys, see below
 npm run dev
 ```
 
-Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard). SQLite is created at `./data/verse-vs-verse.sqlite`; generated Pascal audio and MP4 videos are saved under `data/media`.
+Open http://localhost:3000/dashboard. Without keys every adapter runs a local mock, so the full flow works offline (`Simulate chat` on the dashboard).
 
-For MP4 export, install ffmpeg and have Chrome or Chromium available. Set `FFMPEG_PATH`, `FFPROBE_PATH`, or `CHROME_PATH` in `.env` when they are not on PATH / at the default Windows Chrome location. Export runs after release in the background; it does not hold up the round engine. The share URL is `/song/:id`; its page updates while export is still running.
+Keys in `.env`:
+- `LLM_API_KEY` (any OpenAI-compatible endpoint) for the judge, titles and scenes; `OPENAI_API_KEY` for moderation.
+- `PASCAL_API_KEY` for music and speech-to-text.
+- `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_CHANNEL_LOGIN`. Create a Twitch app with redirect URL `http://localhost:3000/auth/callback`, then open `/auth/login` as the broadcaster.
 
-## Local simulate chat
+Options: `RELEASE_MODE=full` renders a longer final song with the pro model (default `clip` uses the last round's clip, so there is no extra wait). `MUSIC_VIDEO=on` renders an MP4 music video after each release.
 
-1. Press **Start song** and choose a style and mood.
-2. Set the viewer field to `viewer1`, submit `!line City lights keep me dancing`.
-3. Add more lines using different viewer names.
-4. Submit `!force-write-end`, vote with `!1` or `!2`, then submit `!force-vote-end`.
-5. The overlay plays the mock beat and highlights timed words. `PLAY` advances automatically when the clip finishes; `!force-play-end` is available for fast demos.
-6. After `ROUNDS_PER_SONG`, the release moment holds for `RELEASE_SECONDS` then returns to `IDLE`.
+## On stream
 
-## Real services
+- **OBS:** add a Browser Source `http://localhost:3000/overlay` at 1920x1080 (transparent).
+- **Without OBS:** `npm run broadcast` renders the overlay headlessly and streams it to the connected channel (stream key read through the Twitch API), and saves a local copy. `npm run broadcast -- --local` only records.
+- **Rehearsal / load test:** add test accounts at `/auth/login?actor=1` (they can only send chat and never replace the broadcaster). `npm run rehearse -- demo-scripts/demo-song.json` plays a planned song through real Twitch chat from those accounts. The demo video uses this with our two test accounts.
 
-Set keys in `.env`; each adapter logs a warning and falls back to its mock if a key is absent or a provider call fails.
-
-- **LLM judge and title:** set `LLM_API_KEY`; optionally change `LLM_BASE_URL` and `LLM_MODEL`. The app sends JSON-mode `/chat/completions` requests and validates selected lines against the candidate set.
-- **Moderation:** `MODERATION_PROVIDER=openai` uses OpenAI `omni-moderation-latest` when `OPENAI_API_KEY` is set. `MODERATION_PROVIDER=none` keeps the local length, link, repeat, and blocklist checks.
-- **Music and voice:** set `PASCAL_API_KEY`. Configure `PASCAL_MUSIC_MODEL`, `PASCAL_RELEASE_MODEL`, `PASCAL_TTS_MODEL`, and `PASCAL_ASR_MODEL`. Pascal audio is downloaded to `data/media` because provider URLs expire. Whisper timings are aligned to known lyrics; timing falls back to even spacing if alignment fails. TTS model parameters are read from `/models`.
-
-For music, lyrics are sent separately in the `lyrics` field and formatted with `[Verse 1]`, `[Chorus]`, `[Verse 2]`, and `[Bridge]` tags. Pascal `lyrics_lines` timing is preferred; word-level ASR refines it only when it aligns. Audio duration is measured from WAV headers or `ffprobe`, rather than assumed from the requested duration. `GENRES` in `src/config.ts` contains descriptors for each dashboard genre.
-
-Pascal provider response formats can evolve. If an unsupported response shape occurs, the request logs a warning and returns mock audio/voice so the round remains playable.
-
-## Twitch chat
-
-Create a Twitch app and set redirect URL to `http://localhost:3000/auth/callback`. Add `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, and `TWITCH_CHANNEL_LOGIN` to `.env`, then restart. Connect from the dashboard or visit `/auth/login`. On successful OAuth, the app stores tokens in SQLite, refreshes them automatically, starts EventSub, and sends one announcement per phase.
-
-## Scripted demo actors (real Twitch chat)
-
-Set `DEMO_ACTOR_LOGINS` to the Twitch login(s) of demo actor accounts, and make sure those accounts can send messages in the target channel. Then run:
+## Tests
 
 ```powershell
-npm run demo:chat
-```
-
-The first run prints a Twitch device URL and user code. Sign in with the actor account (scope `user:write:chat`); its token is stored in SQLite. The tool reads `DEMO_SCRIPT_PATH` (default `demo-scripts/demo.json`) and watches the local `/ws` for `WRITE`/`VOTE` phase and round changes. Entries are `{ "phase": "WRITE", "round": 1, "at": 3.5, "text": "!line [lofi_lena] ..." }`, where `at` is seconds after the phase starts. It spaces messages to respect chat rate limits and skips entries beyond configured phase lengths.
-
-Only senders listed in `DEMO_ACTOR_LOGINS` get persona attribution. Their `!line [persona] ...` and `!2 [persona]` tags credit and dedupe by persona; other chatters' tags are ignored as attribution metadata.
-
-## OBS overlay
-
-Add a Browser Source URL `http://localhost:3000/overlay`, width `1920`, height `1080`. The page background is transparent.
-
-The overlay shows the full animated scene during `PLAY` and the latest scene as a small preview during `WRITE` and `VOTE`. The pure SVG renderer is `public/scene-renderer.js`; its clay filter, mascot poses, mood backdrops, lettering, and prop entrances follow the scene skill.
-
-## Scene preview and chat commands
-
-- Open [http://localhost:3000/preview](http://localhost:3000/preview) to generate an LLM scene for any lyric and browse the 20 most recent scenes.
-- `!song` posts the current title and credited writers.
-- `!skip` advances the current `PLAY` early only for the broadcaster or a moderator.
-
-## Config and tests
-
-See `.env.example` for provider, Twitch, timing, and spending variables. Songs and tokens are persisted in SQLite; the hourly cap is enforced per running process/channel.
-
-```powershell
-npm test
+npm test          # 42 tests: round engine, lyric sync, timing, moderation fallback, renderer, export
 npm run build
 ```
+
+## How Codex built it
+
+Codex wrote the app in staged prompts (see the git history): scaffold with Twitch OAuth, EventSub and the round engine; real adapters; the clay scene engine and MP4 export; timing and export hardening; line-keyed scenes and animation; lyrics layout and cards; reliability (no fake songs, retries, loop mode, chat commands); and the prop library with the performing mascot. Between stages we tested with real APIs, reviewed exported frames, and committed small fixes separately.
