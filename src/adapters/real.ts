@@ -53,14 +53,14 @@ export class OpenCompatibleJudge implements LineJudge {
 }
 
 export class LlmSceneArtist implements SceneArtist {
-  constructor(private readonly apiKey = config.llmApiKey, private readonly baseUrl = config.llmBaseUrl, private readonly model = config.llmModel) {}
+  constructor(private readonly apiKey = config.llmApiKey, private readonly baseUrl = config.llmBaseUrl, private readonly model = config.sceneModel) {}
   async create(line: CandidateLine, songSoFar: CandidateLine[], mood: string): Promise<SceneSpec> {
     if (!this.apiKey) return new MockSceneArtist().create(line, songSoFar, mood);
     const system = await claySystemPrompt();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const content = await this.chat(`${system}\nReturn only the scene spec JSON object. Props must use palette colors only and simple SVG groups within the 800x450 viewBox.`, { lyric: line.text, song_so_far: songSoFar.map((item) => item.text), mood, retry: attempt > 0 ? 'Previous response was invalid. Return a valid schema and safe SVG.' : undefined });
-        return validateScene(JSON.parse(content), line.text);
+        return validateScene(JSON.parse(content), line.text, mood);
       } catch (error) { if (attempt === 0) console.warn('[SceneArtist] invalid scene; retrying:', error instanceof Error ? error.message : error); }
     }
     console.warn('[SceneArtist] using simple fallback scene');
@@ -112,8 +112,11 @@ export class PascalProvider implements MusicProvider {
 
   async render(style: string, lines: CandidateLine[], mood = 'playful', release = false): Promise<MusicClip> {
     if (!this.apiKey) return new MockMusicProvider().render(style, lines, mood, release);
-    try { return await this.renderReal(style, lines, mood, release); }
-    catch (error) { warn('Pascal music', error); return new MockMusicProvider().render(style, lines, mood, release); }
+    for (let attempt=0; attempt<2; attempt+=1) {
+      try { return await this.renderReal(style, lines, mood, release); }
+      catch (error) { if(attempt===0) console.warn('[Pascal music] transient failure; retrying once:', error instanceof Error ? error.message : error); else warn('Pascal music',error); }
+    }
+    return new MockMusicProvider().render(style, lines, mood, release);
   }
 
   private async renderReal(style: string, lines: CandidateLine[], mood: string, release: boolean): Promise<MusicClip> {
@@ -217,16 +220,15 @@ export function formatLyrics(lines: CandidateLine[]): string {
 type LineTiming = { text: string; start: number; end: number };
 export function alignLyricLines(lines: CandidateLine[], returned: Array<{ text: string; start: number; end?: number }> | undefined, duration: number): LineTiming[] {
   if (!lines.length) return [];
-  const matched = lines.map((line) => returned?.find((item) => normalize(item.text) === normalize(line.text)));
-  const usable = matched.every((item) => item && Number.isFinite(item.start));
-  if (!usable) return lines.map((line, index) => ({ text: line.text, start: duration * index / lines.length, end: duration * (index + 1) / lines.length }));
-  return lines.map((line, index) => {
-    const item = matched[index]!;
-    const start = clamp(item.start, 0, duration);
-    const nextStart = matched[index + 1] ? clamp(matched[index + 1]!.start, start, duration) : duration;
-    return { text: line.text, start, end: clamp(item.end ?? nextStart, start, duration) };
-  });
+  const entries=(returned??[]).filter(item=>Number.isFinite(item.start)&&normalize(item.text));
+  const matches: Array<{start:number;end?:number;entryIndex?:number}|undefined>=[];let cursor=0;
+  for(const line of lines){let bestIndex=-1,bestScore=0;for(let i=cursor;i<entries.length;i++){const score=similarity(normalize(line.text),normalize(entries[i]!.text));if(score>bestScore){bestScore=score;bestIndex=i;}}if(bestIndex>=0&&bestScore>=0.7){matches.push({...entries[bestIndex],entryIndex:bestIndex});cursor=bestIndex+1;}else matches.push(undefined);}
+  const anchors=matches.map((item,index)=>item?{index,start:clamp(item.start,0,duration)}:null).filter((item):item is {index:number;start:number}=>item!==null);
+  for(let i=0;i<matches.length;i++){if(matches[i])continue;const previous=[...anchors].reverse().find(anchor=>anchor.index<i);const next=anchors.find(anchor=>anchor.index>i);const left=previous?.start??0;const right=next?.start??duration;const leftIndex=previous?.index??-1;const rightIndex=next?.index??lines.length;const fraction=(i-leftIndex)/(rightIndex-leftIndex);matches[i]={start:clamp(left+(right-left)*fraction,0,duration)};}
+  return lines.map((line,index)=>{const item=matches[index]!;const start=clamp(item.start,0,duration);const next=matches[index+1];const nextStart=next?clamp(next.start,start,duration):duration;const nextReturned=item.entryIndex===undefined?undefined:entries[item.entryIndex+1]?.start;return{text:line.text,start,end:clamp(item.end??nextReturned??nextStart,start,duration)};});
 }
+
+function similarity(a:string,b:string):number{if(!a||!b)return 0;const rows=Array.from({length:a.length+1},(_,i)=>Array.from({length:b.length+1},(_,j)=>i===0?j:j===0?i:0));for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)rows[i]![j]=Math.min(rows[i-1]![j]!+1,rows[i]![j-1]!+1,rows[i-1]![j-1]!+(a[i-1]===b[j-1]?0:1));return 1-rows[a.length]![b.length]!/Math.max(a.length,b.length);}
 
 function spreadLineWords(text: string, start: number, end: number): TimedWord[] {
   const words = text.trim().split(/\s+/).filter(Boolean);

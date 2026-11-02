@@ -8,7 +8,8 @@ import { db } from './db.js';
 import { OpenCompatibleJudge, PascalProvider, RealModeration, LlmSceneArtist } from './adapters/real.js';
 import { RoundEngine, type RoundEvent, type RoundState, type CandidateLine } from './round-engine.js';
 import { TwitchService } from './twitch.js';
-import { exportMusicVideo } from './video-export.js';
+import { queueMusicVideoExport } from './video-export.js';
+import { rm } from 'node:fs/promises';
 
 const app = express();
 const server = createServer(app);
@@ -37,6 +38,9 @@ function broadcast(event: RoundEvent): void {
   for (const client of wss.clients) if (client.readyState === 1) client.send(data);
 }
 
+await rm(resolve('data/video-work'), { recursive: true, force: true });
+db.prepare("UPDATE songs SET video_status='failed', video_error='Server restarted while export was rendering' WHERE video_status='rendering'").run();
+
 const saveSong = db.prepare(`INSERT INTO songs (id, channel_id, title, style, created_at, audio_url, duration_sec, lines_json, video_status)
   VALUES (@id, @channelId, @title, @style, @createdAt, @audioUrl, @durationSec, @linesJson, @videoStatus)`);
 
@@ -50,18 +54,26 @@ const engine = new RoundEngine({
     id: song.id, channelId: song.channelId, title: song.title, style: song.style,
     createdAt: song.createdAt, audioUrl: song.clip.audioUrl, durationSec: song.clip.durationSec,
     linesJson: JSON.stringify(song.lines),
-    videoStatus: 'rendering',
+    videoStatus: 'pending',
   }),
   saveScene: (line, scene) => db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line, JSON.stringify(scene), Date.now()),
   onRelease: (song) => {
     const audioPath = song.clip.audioUrl.startsWith('/media/') && !song.clip.audioUrl.includes('mock-tone') ? resolve('data', song.clip.audioUrl.slice('/media/'.length).split('?')[0]) : null;
-    if (!audioPath) return;
+    if (!audioPath) {
+      db.prepare("UPDATE songs SET video_status='failed',video_error='No saved audio file is available for video export' WHERE id=?").run(song.id);
+      return;
+    }
     const lineTimings = song.clip.lineTimings ?? song.lines.map((line, index) => ({ text: line.text, start: song.clip.durationSec * index / Math.max(song.lines.length,1), end: song.clip.durationSec * (index + 1) / Math.max(song.lines.length,1) }));
   const videoScenes = song.lines.map((line, index) => ({ scene: song.scenes[index] ?? { keyword: line.text.split(/\s+/)[0] ?? 'song', mood: 'day' as const, ground: true, mascot: { pose: 'stand' as const, x: 580, y: 370, scale: 1, facing: 'left' as const }, props: [] }, line, words: song.clip.words.filter((word) => word.start >= (lineTimings[index]?.start ?? 0) && word.start < (lineTimings[index]?.end ?? song.clip.durationSec)) }));
-    void exportMusicVideo(song.id, song.title, audioPath, song.clip.durationSec, videoScenes).then((videoUrl) => {
-      db.prepare("UPDATE songs SET video_url=?, video_status='ready' WHERE id=?").run(videoUrl, song.id);
+    void queueMusicVideoExport(song.id, song.title, audioPath, song.clip.durationSec, videoScenes, () => {
+      db.prepare("UPDATE songs SET video_status='rendering',video_error=NULL WHERE id=?").run(song.id);
+    }, (error) => {
+      const reason=error instanceof Error?error.message:String(error);
+      db.prepare("UPDATE songs SET video_status='failed',video_error=? WHERE id=?").run(reason.slice(0,1000), song.id);
+    }).then((videoUrl) => {
+      db.prepare("UPDATE songs SET video_url=?, video_status='ready',video_error=NULL WHERE id=?").run(videoUrl, song.id);
       void twitch.sendChat(`Music video is ready: http://localhost:${config.port}/song/${song.id}`);
-    }).catch((error) => { console.error('[Music video export]', error); db.prepare("UPDATE songs SET video_status='failed' WHERE id=?").run(song.id); });
+    }).catch((error) => { console.error('[Music video export]', error); });
   },
 });
 const twitch = new TwitchService(engine);

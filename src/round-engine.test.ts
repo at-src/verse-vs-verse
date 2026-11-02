@@ -52,7 +52,7 @@ describe('RoundEngine', () => {
       await vi.advanceTimersByTimeAsync(2_000); // WRITE ends
       await vi.advanceTimersByTimeAsync(2_000); // VOTE ends -> PRODUCE -> PLAY
       expect(engine.snapshot().phase).toBe('PLAY');
-      await vi.advanceTimersByTimeAsync(5_600); // mock clip is 4s (one short line) + 1.5s -> RELEASE
+      await vi.advanceTimersByTimeAsync(6_100); // final lyric line plus two second breath -> RELEASE
       expect(engine.snapshot().phase).toBe('RELEASE');
       await vi.advanceTimersByTimeAsync(3_100); // release hold
       expect(engine.snapshot().phase).toBe('IDLE');
@@ -82,5 +82,17 @@ describe('RoundEngine', () => {
     await Promise.resolve();
     expect(['WRITE','RELEASE']).toContain(engine.snapshot().phase);
     expect(engine.skipPlay()).toBe(false);
+  });
+
+  it('ends a long round clip shortly after the last lyric line end', async () => {
+    vi.useFakeTimers();
+    try {
+      const music = { render: vi.fn(async () => ({ audioUrl:'/media/test.mp3', durationSec:30, words:[{word:'one',start:0,end:1},{word:'two',start:3,end:4}], lineTimings:[{text:'one two',start:0,end:4}] })) };
+      const engine = new RoundEngine({ writeSeconds:50,voteSeconds:50,roundsPerSong:4,maxSongsPerHour:4,channelId:'x',channelLogin:'x',judge:new MockLineJudge(),moderation:new MockModeration(),music,artist:new MockSceneArtist(),voice:new MockVoice() });
+      await engine.start();await engine.submitLine({text:'one two',login:'x',userId:'x'});await engine.finishWrite();await engine.finishVote();
+      await vi.advanceTimersByTimeAsync(5_900);expect(engine.snapshot().phase).toBe('PLAY');
+      await vi.advanceTimersByTimeAsync(200);expect(engine.snapshot().phase).toBe('WRITE');
+      engine.stop();
+    } finally { vi.useRealTimers(); }
   });
 });

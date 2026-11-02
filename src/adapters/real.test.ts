@@ -27,4 +27,11 @@ describe('real adapter fallback', () => {
     expect(clip.audioUrl).toContain('/media/mock-tone.wav');
     expect(error).toHaveBeenCalled();
   });
+
+  it('retries Pascal music once after a transient failure', async()=>{
+    const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);let attempts=0;
+    vi.stubGlobal('fetch',vi.fn(async()=>{attempts++;return attempts===1?new Response('temporary failure',{status:503}):new Response(JSON.stringify({id:'job-2',status:'failed',error_code:'no_audio',error_message:'no audio'}),{status:200});}));
+    const clip=await new PascalProvider('test-key','http://fake').render('pop',[a]);
+    expect(attempts).toBe(2);expect(clip.audioUrl).toContain('mock-tone');expect(warn).toHaveBeenCalled();
+  });
 });

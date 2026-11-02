@@ -31,6 +31,7 @@ export const config = {
   llmBaseUrl: process.env.LLM_BASE_URL ?? 'https://api.openai.com/v1',
   llmApiKey: process.env.LLM_API_KEY ?? '',
   llmModel: process.env.LLM_MODEL ?? 'gpt-4.1-mini',
+  sceneModel: process.env.SCENE_MODEL ?? 'gpt-4.1',
   moderationProvider: process.env.MODERATION_PROVIDER ?? 'openai',
   openAiApiKey: process.env.OPENAI_API_KEY ?? '',
   pascalApiKey: process.env.PASCAL_API_KEY ?? '',

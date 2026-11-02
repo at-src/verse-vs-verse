@@ -3,11 +3,14 @@ import { renderScene } from './scene-renderer.js';
 const $ = (id) => document.getElementById(id);
 let state;
 let audioStartedFor = null;
+let activeScene = null;
+let activeLine = '';
+let activeClip = null;
 const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
 ws.onmessage = ({ data }) => {
   const event = JSON.parse(data);
   if (event.type === 'STATE') { state = event.state; render(); }
-  if (event.type === 'SCENE') renderScene($('scene'), event.scene, { line: event.line.text, words: state?.clip?.words ?? [] });
+  if (event.type === 'SCENE') { activeScene = event.scene; activeLine = event.line.text; if (activeClip) renderScene($('scene'), activeScene, { line: activeLine, words: wordsForLine(activeClip, activeLine), time: $('player').currentTime }); }
   if (event.type === 'CLIP') play(event.clip);
   if (event.type === 'VOICE') { const voice = new Audio(event.audioUrl); voice.play().catch(() => undefined); }
 };
@@ -36,15 +39,33 @@ function play(clip) {
   const key = `${clip.audioUrl}:${clip.durationSec}`;
   if (audioStartedFor === key) return;
   audioStartedFor = key;
+  activeClip = clip;
+  if (activeScene) renderScene($('scene'), activeScene, { line: activeLine, words: wordsForLine(clip, activeLine), time: 0 });
   player.src = clip.audioUrl;
   player.currentTime = 0;
+  player.volume = 1;
   player.play().catch(() => undefined);
   player.ontimeupdate = () => {
-    $('content').querySelectorAll('.word').forEach((node) => {
-      const start = Number(node.dataset.start); const end = Number(node.dataset.end);
-      node.classList.toggle('active', player.currentTime >= start && player.currentTime <= end);
-    });
+    const lastEnd=clip.lineTimings?.at(-1)?.end ?? clip.words.at(-1)?.end ?? clip.durationSec;
+    const isRoundClip = state?.phase === 'PLAY';
+    const remaining=lastEnd+2-player.currentTime;
+    player.volume=isRoundClip&&remaining<2?Math.max(0,Math.min(1,remaining/2)):1;
+    if (isRoundClip && player.currentTime >= lastEnd + 2) { player.pause(); return; }
+    if (activeScene) updateSceneWords($('scene'), wordsForLine(clip, activeLine), player.currentTime);
   };
+}
+
+function wordsForLine(clip, line) {
+  const key = String(line).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  const timing = clip.lineTimings?.find((item) => String(item.text).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') === key);
+  return timing ? clip.words.filter((word) => word.start >= timing.start && word.start < timing.end) : clip.words;
+}
+
+function updateSceneWords(container, words, time) {
+  container.querySelectorAll('.lyric-word').forEach((node) => {
+    const item = words[Number(node.dataset.wordIndex)];
+    node.classList.toggle('active', Boolean(item && time >= item.start && time <= item.end));
+  });
 }
 
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }

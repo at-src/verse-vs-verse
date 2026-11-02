@@ -43,3 +43,5 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 `);
+const errorColumn = new Set((db.prepare('PRAGMA table_info(songs)').all() as Array<{ name: string }>).map((column) => column.name));
+if (!errorColumn.has('video_error')) db.exec('ALTER TABLE songs ADD COLUMN video_error TEXT');

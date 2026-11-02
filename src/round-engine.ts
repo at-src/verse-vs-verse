@@ -142,7 +142,6 @@ export class RoundEngine {
     ]);
     this.state.clip = clip;
     this.state.clipStartedAt = this.now();
-    this.state.clipStartedAt = this.now();
     if (winner && scenes[0]) this.options.saveScene?.(winner.text, scenes[0]);
     scenes.forEach((scene, index) => { const lyric = newLines[index]; if (lyric) scene.line = lyric.text; });
     this.state.scenes = scenes;
@@ -151,7 +150,8 @@ export class RoundEngine {
     this.setPhase('PLAY');
     // the clip plays on the overlay; move on once it has finished (plus a short breath)
     if (this.playTimer) clearTimeout(this.playTimer);
-    this.playTimer = setTimeout(() => void this.finishPlay(), (clip.durationSec + 1.5) * 1000);
+    const lastLineEnd = clip.lineTimings?.at(-1)?.end ?? clip.words.at(-1)?.end ?? clip.durationSec;
+    this.playTimer = setTimeout(() => void this.finishPlay(), (Math.max(0,lastLineEnd) + 2) * 1000);
   }
 
   async finishPlay(): Promise<void> {
