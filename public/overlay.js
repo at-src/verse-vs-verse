@@ -31,7 +31,7 @@ function renderPanel(){
   $('phase').textContent=`VERSE vs VERSE · ${state.phase}`;
   $('countdown').textContent=state.deadline?`${Math.max(0,Math.ceil((state.deadline-Date.now())/1000))} seconds`:'';
   const producing=state.phase==='PRODUCE'||(state.phase==='RELEASE'&&!state.clip&&!state.releaseFailed);
-  const headlines={IDLE:'The chat writes<br>the next hit.',WRITE:'Drop your line.',SHORTLIST:'The room is listening…',VOTE:'Pick the line.',PRODUCE:state.musicRetrying?'The band is retuning…':'Making a little magic…',PLAY:'Our song so far.',RELEASE:state.musicRetrying?'The band is retuning…':state.title};
+  const headlines={IDLE:'The chat writes<br>the next hit.',WRITE:'Drop your line.',SHORTLIST:'The room is listening…',VOTE:'Pick the line.',PRODUCE:state.musicRetrying?'The band is retuning…':'Making a little magic…',PLAY:'Our song so far.',RELEASE:state.musicRetrying?'The band is retuning…':state.clip?state.title:'Mixing the final song…'};
   $('headline').innerHTML=headlines[state.phase];
   if(state.phase==='WRITE')$('content').innerHTML=state.lines.map((line)=>`<div>@${escapeHtml(line.login)} · ${escapeHtml(line.text)}</div>`).join('');
   else if(state.phase==='VOTE')$('content').innerHTML=state.shortlist.map((line,i)=>`<div>!${i+1} · ${escapeHtml(line.text)} <small>(${state.votes[i]||0})</small></div>`).join('');
