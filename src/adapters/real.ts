@@ -153,7 +153,9 @@ export class PascalProvider implements MusicProvider {
     // The release model only times the first line of each section, so for the music video we transcribe the song
     // and align chat's lines to the heard words (every repeat, real word times).
     if (release) {
-      const heard = await this.transcribe(bytes, fileName, ext, lines.map((line) => line.text)).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; });
+      const listen = () => this.transcribe(bytes, fileName, ext, lines.map((line) => line.text)).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; });
+      let heard = await listen();
+      if (!heard?.length) { console.warn(`[Pascal ASR] empty transcript for job_id=${finished.id}; retrying once`); await this.wait(2000); heard = await listen(); }
       const synced = heard?.length ? syncLyrics(lines.map((line) => line.text), heard, durationSec) : null;
       if (synced && synced.linesFound === lines.length && synced.matchedWords >= 0.6 * synced.expectedWords) {
         console.info(`[Lyric sync] job_id=${finished.id} segments=${synced.segments.length} words=${synced.matchedWords}/${synced.expectedWords}`);
@@ -170,7 +172,13 @@ export class PascalProvider implements MusicProvider {
         return { audioUrl: `/media/${finalName}`, durationSec: finalDuration, lineTimings: firstTimes, sungSegments: kept, words: kept.flatMap((segment) => segment.words), fidelityScore, isMock: false };
       }
       console.warn(`[Lyric sync] job_id=${finished.id} could not align (${synced ? `${synced.linesFound}/${lines.length} lines, ${synced.matchedWords}/${synced.expectedWords} words` : 'no transcript'}); using model line times`);
-      return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words: refineTimings(words, heard), fidelityScore, isMock: false };
+      // still keep the song short: cut on the model's own line times, and never past 75 s
+      const indexed = sung.map((segment) => { let best = -1, score = 0; lines.forEach((line, index) => { const s = similarity(normalize(line.text), normalize(segment.text)); if (s > score) { score = s; best = index; } }); return { ...segment, lineIndex: score >= 0.7 ? best : -1 }; }).filter((segment) => segment.lineIndex >= 0);
+      const cut = Math.min(75, indexed.length ? releaseCutPoint(indexed, lines.length, durationSec) : durationSec, durationSec);
+      let finalName = fileName, finalDuration = durationSec;
+      if (cut < durationSec - 1) { try { finalName = await trimAudio(resolve(mediaDir, fileName), cut, ext); finalDuration = cut; console.info(`[Release trim] job_id=${finished.id} ${durationSec.toFixed(1)}s -> ${cut.toFixed(1)}s (model times)`); } catch (error) { console.error('[Release trim] failed; keeping the full song:', error instanceof Error ? error.message : error); } }
+      const keep = (items: Array<{ text: string; start: number; end: number }>) => items.filter((item) => item.start < finalDuration).map((item) => ({ ...item, end: Math.min(item.end, finalDuration) }));
+      return { audioUrl: `/media/${finalName}`, durationSec: finalDuration, lineTimings: keep(lyricsLines), sungSegments: keep(sung), words: refineTimings(words, heard).filter((word) => word.start < finalDuration), fidelityScore, isMock: false };
     }
     return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words, fidelityScore, isMock:false };
   }
@@ -201,7 +209,14 @@ export class PascalProvider implements MusicProvider {
       response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/speech-to-text`, { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}` }, body: form });
     }
     if (!response.ok) throw new Error(`Pascal ASR returned ${response.status}`);
-    const data = await response.json() as { result?: { words?: TimedWord[] }; words?: TimedWord[] };
+    let data = await response.json() as { id?: string; status?: string; result?: { words?: TimedWord[] }; words?: TimedWord[] };
+    // long or busy transcriptions can come back as a pending job instead of a finished result
+    for (let i = 0; data.id && data.status && !['succeeded', 'failed'].includes(data.status) && i < 80; i++) {
+      await this.wait(1500);
+      const poll = await fetch(`${this.baseUrl.replace(/\/$/, '')}/speech-to-text/${encodeURIComponent(data.id)}`, { headers: { authorization: `Bearer ${this.apiKey}` } });
+      if (poll.ok) data = await poll.json() as typeof data;
+    }
+    if (data.status === 'failed') throw new Error('Pascal ASR job failed');
     return data.result?.words ?? data.words ?? null;
   }
 
