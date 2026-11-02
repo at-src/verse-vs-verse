@@ -4,6 +4,8 @@ Verse vs Verse turns a Twitch chat into a live songwriting room. Viewers submit 
 
 Built for the Codex x TwitchCon Hackathon with OpenAI Codex.
 
+**Demo video:** [youtu.be/LquaIDX2JBo](https://youtu.be/LquaIDX2JBo)
+
 ![Line vs line on stream](docs/screens/01-battle.jpg)
 
 ![The scenes follow the lyrics](docs/screens/03-crown.jpg)
