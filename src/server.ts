@@ -10,6 +10,7 @@ import { RoundEngine, type RoundEvent, type RoundState, type CandidateLine } fro
 import { TwitchService } from './twitch.js';
 import { queueMusicVideoExport } from './video-export.js';
 import { rm } from 'node:fs/promises';
+import { getSceneForLine, sceneKeyForLine } from './scene-index.js';
 
 const app = express();
 const server = createServer(app);
@@ -17,6 +18,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 app.use(express.json());
 const oauthStates = new Map<string, number>();
 const scopes = ['user:read:chat', 'user:write:chat', 'channel:read:redemptions', 'moderator:read:followers'];
+function normalizeLine(text: string): string { return text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); }
 
 let lastPhase = 'IDLE';
 let twitchRef: TwitchService | null = null;
@@ -57,14 +59,26 @@ const engine = new RoundEngine({
     videoStatus: 'pending',
   }),
   saveScene: (line, scene) => db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line, JSON.stringify(scene), Date.now()),
-  onRelease: (song) => {
+  onRelease: async (song) => {
     const audioPath = song.clip.audioUrl.startsWith('/media/') && !song.clip.audioUrl.includes('mock-tone') ? resolve('data/media', song.clip.audioUrl.slice('/media/'.length).split('?')[0]) : null;
     if (!audioPath) {
       db.prepare("UPDATE songs SET video_status='failed',video_error='No saved audio file is available for video export' WHERE id=?").run(song.id);
       return;
     }
-    const lineTimings = song.clip.lineTimings ?? song.lines.map((line, index) => ({ text: line.text, start: song.clip.durationSec * index / Math.max(song.lines.length,1), end: song.clip.durationSec * (index + 1) / Math.max(song.lines.length,1) }));
-  const videoScenes = song.lines.map((line, index) => ({ scene: song.scenes[index] ?? { keyword: line.text.split(/\s+/)[0] ?? 'song', mood: 'day' as const, ground: true, mascot: { pose: 'stand' as const, x: 580, y: 370, scale: 1, facing: 'left' as const }, props: [] }, line, words: song.clip.words.filter((word) => word.start >= (lineTimings[index]?.start ?? 0) && word.start < (lineTimings[index]?.end ?? song.clip.durationSec)) }));
+    const unassigned = [...(song.clip.lineTimings ?? [])];
+    const lineTimings = song.lines.map((line, index) => {
+      const match = unassigned.findIndex((timing) => normalizeLine(timing.text) === normalizeLine(line.text));
+      return match >= 0 ? unassigned.splice(match, 1)[0]! : { text: line.text, start: song.clip.durationSec * index / Math.max(song.lines.length,1), end: song.clip.durationSec * (index + 1) / Math.max(song.lines.length,1) };
+    });
+    const videoScenes = await Promise.all(song.lines.map(async (line, lineIndex) => {
+      const timing = lineTimings[lineIndex]!;
+      let scene = getSceneForLine(song.scenes, line);
+      if (!scene) {
+        scene = await new LlmSceneArtist().create(line, song.lines, song.mood);
+        db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line.text, JSON.stringify(scene), Date.now());
+      }
+      return { lineKey: sceneKeyForLine(line), scene, line, start: timing.start, end: timing.end, words: song.clip.words.filter((word) => word.start >= timing.start && word.start < timing.end) };
+    }));
     void queueMusicVideoExport(song.id, song.title, audioPath, song.clip.durationSec, videoScenes, () => {
       db.prepare("UPDATE songs SET video_status='rendering',video_error=NULL WHERE id=?").run(song.id);
     }, (error) => {

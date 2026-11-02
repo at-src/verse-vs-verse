@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { CandidateLine, LineJudge, Moderation, MusicProvider, SceneArtist, SceneSpec, Voice, MusicClip } from './adapters/types.js';
+import { sceneKeyForLine, type SceneIndex } from './scene-index.js';
 export type { CandidateLine } from './adapters/types.js';
 
 export type Phase = 'IDLE' | 'WRITE' | 'SHORTLIST' | 'VOTE' | 'PRODUCE' | 'PLAY' | 'RELEASE';
@@ -14,16 +15,16 @@ export type RoundEvent =
 export type RoundState = {
   phase: Phase; round: number; roundsPerSong: number; style: string; mood: string;
   deadline: number | null; phaseStartedAt: number; clipStartedAt: number | null; lines: CandidateLine[]; shortlist: CandidateLine[]; votes: number[];
-  song: CandidateLine[]; clip: MusicClip | null; scenes: SceneSpec[]; title: string;
+  song: CandidateLine[]; clip: MusicClip | null; scenes: SceneIndex; title: string;
 };
 type EngineOptions = {
   writeSeconds: number; voteSeconds: number; roundsPerSong: number; maxSongsPerHour: number; releaseSeconds?: number;
   channelId: string; channelLogin: string; judge: LineJudge; moderation: Moderation;
   music: MusicProvider; artist: SceneArtist; voice: Voice;
   now?: () => number; broadcast?: (event: RoundEvent) => void;
-  saveSong?: (song: { id: string; channelId: string; title: string; style: string; createdAt: number; clip: MusicClip; lines: CandidateLine[]; scenes: SceneSpec[] }) => void;
+  saveSong?: (song: { id: string; channelId: string; title: string; style: string; createdAt: number; clip: MusicClip; lines: CandidateLine[]; scenes: SceneIndex }) => void;
   saveScene?: (line: string, scene: SceneSpec) => void;
-  onRelease?: (song: { id: string; title: string; clip: MusicClip; lines: CandidateLine[]; scenes: SceneSpec[] }) => void;
+  onRelease?: (song: { id: string; title: string; style: string; mood: string; clip: MusicClip; lines: CandidateLine[]; scenes: SceneIndex }) => void | Promise<void>;
 };
 
 const LINK_OR_EMOTE = /(https?:\/\/\S+|www\.\S+|\b\w+\.com\b|\b\w+\.gg\b)/i;
@@ -41,7 +42,7 @@ export class RoundEngine {
   private roundVoters = new Set<string>();
   private state: RoundState = {
     phase: 'IDLE', round: 0, roundsPerSong: 4, style: 'pop', mood: 'playful', deadline: null, phaseStartedAt: 0, clipStartedAt: null,
-    lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: [], title: 'Verse vs Verse',
+    lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: {}, title: 'Verse vs Verse',
   };
   private phaseStartedAt = 0;
 
@@ -69,7 +70,7 @@ export class RoundEngine {
     if (this.songTimes.length >= this.options.maxSongsPerHour) throw new Error('Hourly song limit reached');
     this.songTimes.push(this.now());
     this.usersThisHour.clear();
-    this.state = { ...this.state, phase: 'IDLE', round: 0, style, mood, lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: [], title: 'Verse vs Verse', deadline: null, clipStartedAt: null };
+    this.state = { ...this.state, phase: 'IDLE', round: 0, style, mood, lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: {}, title: 'Verse vs Verse', deadline: null, clipStartedAt: null };
     await this.beginWrite();
   }
 
@@ -90,7 +91,7 @@ export class RoundEngine {
     const text = line.text.trim().replace(/\s+/g, ' ');
     if (!text || text.length > 80 || LINK_OR_EMOTE.test(text) || /\b(\w+)(?:\s+\1){3,}/i.test(text)) return false;
     if (await this.options.moderation.check(text) !== 'ok') return false;
-    const accepted = { ...line, text };
+    const accepted = { ...line, id: line.id ?? randomUUID(), text };
     this.roundUsers.add(line.userId);
     this.state.lines.push(accepted);
     this.broadcast({ type: 'CHAT_LINE', line: accepted });
@@ -134,7 +135,6 @@ export class RoundEngine {
     const winner = this.state.shortlist[winningIndex];
     if (winner) this.state.song.push(winner);
     this.state.clip = null;
-    this.state.scenes = [];
     const newLines = winner ? [winner] : [];
     const [clip, scenes] = await Promise.all([
       this.options.music.render(this.state.style, this.state.song, this.state.mood),
@@ -142,10 +142,8 @@ export class RoundEngine {
     ]);
     this.state.clip = clip;
     this.state.clipStartedAt = this.now();
-    if (winner && scenes[0]) this.options.saveScene?.(winner.text, scenes[0]);
     scenes.forEach((scene, index) => { const lyric = newLines[index]; if (lyric) scene.line = lyric.text; });
-    this.state.scenes = scenes;
-    scenes.forEach((scene, index) => { const line = newLines[index]; if (line) this.broadcast({ type: 'SCENE', line, scene }); });
+    scenes.forEach((scene, index) => { const line = newLines[index]; if (line) { this.state.scenes[sceneKeyForLine(line)] = scene; this.options.saveScene?.(line.text, scene); this.broadcast({ type: 'SCENE', line, scene }); } });
     this.broadcast({ type: 'CLIP', clip });
     this.setPhase('PLAY');
     // the clip plays on the overlay; move on once it has finished (plus a short breath)
@@ -168,7 +166,7 @@ export class RoundEngine {
       }
       this.state.clip = clip;
       this.state.clipStartedAt = this.now();
-      this.options.saveSong?.({ id, channelId: this.options.channelId, title: this.state.title, style: this.state.style, createdAt: this.now(), clip, lines: [...this.state.song], scenes: [...this.state.scenes] });
+      this.options.saveSong?.({ id, channelId: this.options.channelId, title: this.state.title, style: this.state.style, createdAt: this.now(), clip, lines: [...this.state.song], scenes: { ...this.state.scenes } });
       this.broadcast({ type: 'CLIP', clip });
       this.broadcast({ type: 'SAVED', songId: id });
       this.broadcast({ type: 'STATE', state: this.snapshot() });
@@ -176,7 +174,7 @@ export class RoundEngine {
       if (this.releaseTimer) clearTimeout(this.releaseTimer);
       this.releaseTimer = setTimeout(() => { if (this.state.phase === 'RELEASE') this.setPhase('IDLE'); }, (this.options.releaseSeconds ?? 20) * 1000);
       void this.options.voice.speak(`That was ${this.state.title}!`).then((voiceUrl) => { if (voiceUrl) this.broadcast({ type: 'VOICE', audioUrl: voiceUrl }); }).catch((error) => console.warn('[Voice] release announcement failed:', error));
-      this.options.onRelease?.({ id, title: this.state.title, clip, lines: [...this.state.song], scenes: [...this.state.scenes] });
+      void Promise.resolve(this.options.onRelease?.({ id, title: this.state.title, style: this.state.style, mood: this.state.mood, clip, lines: [...this.state.song], scenes: { ...this.state.scenes } })).catch((error) => console.error('[Release] background work failed:', error));
       return;
     }
     await this.beginWrite();

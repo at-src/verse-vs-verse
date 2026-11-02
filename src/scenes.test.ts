@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fallbackScene, sanitizeProps, sanitizeSvg, validateScene } from './scenes.js';
+import { MockSceneArtist } from './adapters/mock.js';
 
 describe('clay scene validation', () => {
   const base = { keyword: 'dandelions', mood: 'day', ground: true, mascot: { pose: 'sit', x: 370, y: 352, scale: 1, facing: 'right' }, props: [{ id: 'flowers', svg: '<g fill="#5ea85a"><path d="M100 300 L100 220" stroke="#4f9a62" stroke-width="5"/></g>', enter: 'grow' }] };
@@ -13,7 +14,11 @@ describe('clay scene validation', () => {
     expect(validateScene({ ...base, mood: 'cyber' }, 'in a field of dandelions', 'dream').mood).toBe('dream');
   });
   it('uses the simple fallback scene for unusable model output', () => {
-    expect(fallbackScene('my cat stole the controller', 'day')).toMatchObject({ keyword: 'cat', mood: 'day', props: [] });
+    expect(fallbackScene('my cat', 'day')).toMatchObject({ keyword: 'cat', mood: 'day', props: [] });
+    expect(fallbackScene('in a field of dandelions', 'day').keyword).toBe('dandelions');
+  });
+  it('uses stopword-aware keywords in the offline scene artist too',async()=>{
+    expect((await new MockSceneArtist().create({text:'the moon',login:'a',userId:'1'},[],'day')).keyword).toBe('moon');
   });
   it('snaps colors and drops harmless disallowed attributes/elements while blocking active SVG',()=>{
     const repaired=sanitizeSvg('<g><path fill="#e9d1bf" d="M5 5L10 10" onclick="x"/><text>bad</text><circle cx="20" cy="20" r="3" fill="#ffd23f"/></g>');

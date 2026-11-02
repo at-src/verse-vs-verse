@@ -186,10 +186,12 @@ export class PascalProvider implements MusicProvider {
       if (!response.ok) throw new Error(`Pascal TTS returned ${response.status}`);
       const result = await response.json() as PascalJob;
       const finished = await this.pollJob(result);
-      const url = finished.result?.artifacts?.find((item) => item.content_type?.startsWith('audio/'))?.url ?? finished.playback_url;
+      const artifact = finished.result?.artifacts?.find((item) => item.content_type?.startsWith('audio/'));
+      const url = artifact?.url ?? finished.playback_url;
       if (!url) throw new Error('Pascal TTS returned no audio URL');
       const audio = await fetch(url); if (!audio.ok) throw new Error(`Pascal TTS download returned ${audio.status}`);
-      const fileName = `${randomUUID()}.mp3`; const dir = resolve('data/media'); await mkdir(dir, { recursive: true }); await writeFile(resolve(dir, fileName), Buffer.from(await audio.arrayBuffer()));
+      const extension = audioExtension(artifact?.content_type ?? audio.headers.get('content-type') ?? '', url);
+      const fileName = `${randomUUID()}${extension}`; const dir = resolve('data/media'); await mkdir(dir, { recursive: true }); await writeFile(resolve(dir, fileName), Buffer.from(await audio.arrayBuffer()));
       return `/media/${fileName}`;
     } catch (error) { warn('Pascal voice', error); return new MockVoice().speak(text); }
   }
@@ -198,6 +200,14 @@ export class PascalProvider implements MusicProvider {
     const response = await this.requestJson<PascalModels | { data?: PascalModels }>('/models');
     return Array.isArray(response) ? response : response.data ?? [];
   }
+}
+
+function audioExtension(contentType: string, url: string): string {
+  const mime=contentType.toLowerCase().split(';')[0]?.trim();
+  const byMime:Record<string,string>={'audio/mpeg':'.mp3','audio/mp3':'.mp3','audio/wav':'.wav','audio/x-wav':'.wav','audio/ogg':'.ogg','audio/opus':'.opus','audio/webm':'.webm','audio/mp4':'.m4a','audio/aac':'.aac','audio/flac':'.flac'};
+  if(mime&&byMime[mime])return byMime[mime]!;
+  try{const ext=new URL(url).pathname.match(/\.(mp3|wav|ogg|opus|webm|m4a|aac|flac)$/i)?.[0].toLowerCase();if(ext)return ext;}catch{}
+  return '.audio';
 }
 
 function ttsParams(schema: Record<string, unknown>): Record<string, unknown> {

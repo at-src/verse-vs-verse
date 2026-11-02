@@ -1,4 +1,5 @@
 import type { CandidateLine, LineJudge, Moderation, MusicClip, MusicProvider, SceneArtist, SceneSpec, Voice } from './types.js';
+import { fallbackScene } from '../scenes.js';
 
 export class MockLineJudge implements LineJudge {
   async choose(lines: CandidateLine[], _songSoFar: CandidateLine[] = [], _style = 'pop', _mood = 'playful'): Promise<CandidateLine[]> {
@@ -34,7 +35,7 @@ export class MockMusicProvider implements MusicProvider {
 
 export class MockSceneArtist implements SceneArtist {
   async create(line: CandidateLine, _songSoFar: CandidateLine[] = [], mood = 'day'): Promise<SceneSpec> {
-    return { keyword: line.text.split(/\s+/)[0] ?? 'verse', mood: ['day','dream','night','warm','sea'].includes(mood) ? mood as SceneSpec['mood'] : 'day', ground: true, mascot: { pose: 'stand', x: 575, y: 370, scale: 1, facing: 'left' }, props: [] };
+    return fallbackScene(line.text, mood);
   }
 }
 

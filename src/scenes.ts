@@ -4,8 +4,9 @@ import type { CandidateLine, MascotPose, SceneMood, SceneProp, SceneSpec } from 
 const moods: SceneMood[] = ['day', 'dream', 'night', 'warm', 'sea'];
 const poses: MascotPose[] = ['stand', 'sit', 'walk', 'blow', 'lookup', 'puzzled', 'sleep', 'wave', 'hug', 'jump'];
 const entrances = ['drop', 'grow', 'slide', 'drift', 'draw', 'pop'] as const;
+const STOPWORDS = new Set(['my','we','the','a','is','at','in','on','with','i','you','and','to','of','it','our','this','that','be','are','was','for']);
 const allowedTags = new Set(['g', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon', 'defs', 'linearGradient', 'radialGradient', 'stop']);
-const palette = ['#fffaf0','#f3ecdf','#d9cfc0','#8a5a3c','#c96f4a','#f08a8a','#e3b448','#ffd23f','#7cbf6a','#5ea85a','#4f9a62','#7fd1c7','#3f8f87','#3f6fc0','#2f2a3a','#2a2622','#e8b41f','#2f6f7a','#fff4d6','#d98a5f','#c9bfa8'];
+const palette = ['#fffaf0','#f3ecdf','#d9cfc0','#8a5a3c','#c96f4a','#f08a8a','#e3b448','#ffd23f','#7cbf6a','#5ea85a','#4f9a62','#7fd1c7','#3f8f87','#3f6fc0','#2f2a3a','#2a2622','#e8b41f'];
 const attributeAllow = new Set(['d','fill','fill-opacity','stroke','stroke-width','stroke-linecap','stroke-linejoin','opacity','transform','cx','cy','r','rx','ry','x','y','width','height','x1','x2','y1','y2','points','viewBox','offset','stop-color','stop-opacity','gradientUnits','gradientTransform','id']);
 
 export function sanitizeProps(input: unknown): SceneProp[] {
@@ -69,8 +70,8 @@ export function validateScene(raw: unknown, line: string, requestedMood = 'day')
 
 export function fallbackScene(line: string, mood: string): SceneSpec {
   const words=line.split(/\s+/).filter((word)=>/[\p{L}\p{N}]/u.test(word));
-  const stop=new Set(['my','we','the','a','is','at','in','on','with','i','you','and','to','of','it','our','this','that','be','are','was','for']);
-  const keyword=(words.find(word=>!stop.has(normalize(word)))??words[0]??'VERSE').replace(/[^\p{L}\p{N}'’]/gu,'');
+  const content=words.filter(word=>!STOPWORDS.has(normalize(word)));
+  const keyword=([...(content.length?content:words)].sort((a,b)=>normalize(b).length-normalize(a).length)[0]??'VERSE').replace(/[^\p{L}\p{N}'’]/gu,'');
   return { line, keyword, mood: moods.includes(mood as SceneMood) ? mood as SceneMood : 'day', ground: true, mascot: { pose: 'stand', x: 575, y: 370, scale: 1, facing: 'left' }, props: [] };
 }
 
@@ -85,6 +86,6 @@ function snapColor(color:string):string{
   if(!target)return'#d9cfc0';let best=palette[0]!;let score=Infinity;for(const candidate of palette){const candidateRgb=[1,3,5].map(index=>parseInt(candidate.slice(index,index+2),16));const distance=candidateRgb.reduce((sum,component,index)=>sum+(component-target[index]!)**2,0);if(distance<score){score=distance;best=candidate;}}return best;
 }
 function escapeAttr(value:string):string{return value.replace(/[&"<>]/g,char=>({'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[char]!));}
-function closestWord(keyword:string,words:string[]):string{const normalized=normalize(keyword);if(!normalized)return words.sort((a,b)=>b.length-a.length)[0]!;return words.reduce((best,word)=>similarity(normalized,normalize(word))>similarity(normalized,normalize(best))?word:best,words[0]!);}
+function closestWord(keyword:string,words:string[]):string{const normalized=normalize(keyword);if(!normalized){const visual=words.filter(word=>!STOPWORDS.has(normalize(word)));return [...(visual.length?visual:words)].sort((a,b)=>normalize(b).length-normalize(a).length)[0]!;}return words.reduce((best,word)=>similarity(normalized,normalize(word))>similarity(normalized,normalize(best))?word:best,words[0]!);}
 function similarity(a:string,b:string):number{const rows=Array.from({length:a.length+1},(_,i)=>Array.from({length:b.length+1},(_,j)=>i===0?j:j===0?i:0));for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)rows[i]![j]=Math.min(rows[i-1]![j]!+1,rows[i]![j-1]!+1,rows[i-1]![j-1]!+(a[i-1]===b[j-1]?0:1));return 1-rows[a.length]![b.length]!/Math.max(a.length,b.length,1);}
 function clamp(value:number,min:number,max:number):number{return Math.max(min,Math.min(max,value));}

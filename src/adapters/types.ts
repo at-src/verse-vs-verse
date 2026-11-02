@@ -1,4 +1,4 @@
-export type CandidateLine = { text: string; userId: string; login: string };
+export type CandidateLine = { id?: string; text: string; userId: string; login: string };
 export type TimedWord = { word: string; start: number; end: number };
 export type MusicClip = { audioUrl: string; durationSec: number; words: TimedWord[]; lineTimings?: Array<{ text: string; start: number; end: number }> };
 export type SceneMood = 'day' | 'dream' | 'night' | 'warm' | 'sea';
