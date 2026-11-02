@@ -95,9 +95,9 @@ Set these in `.env`:
 
 ### Models
 
-The defaults below are the recommended models for each role.
+The recommended models below are the defaults. Any GPT-6 family model (Astra, Sol, Terra or Luna) can be set for `LLM_MODEL` or `SCENE_MODEL`.
 
-| Variable | Default | Role |
+| Variable | Recommended | Role |
 |---|---|---|
 | `PASCAL_MUSIC_MODEL` | `lyria-3-clip-preview` | Sings each winning line |
 | `PASCAL_RELEASE_MODEL` | `lyria-3-pro-preview` | Full-length final song, used only when `RELEASE_MODE=full` |
