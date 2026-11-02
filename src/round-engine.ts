@@ -220,6 +220,8 @@ export class RoundEngine {
       this.options.onReleaseFailure?.({id:this.releaseSongId??randomUUID(),channelId:this.options.channelId,title:this.state.title,style:this.state.style,createdAt:this.now(),lines:[...this.state.song],error:this.state.clipError});
       this.broadcast({type:'STATE',state:this.snapshot()});
       this.broadcast({type:'MUSIC_FAILED',release:true,message:'Release render failed; retry is available in the dashboard.'});
+      // a live stream must not sit on a failed release forever: in loop mode, hold for the release window and then start the next song
+      if(this.state.loopMode){const holdMs=(this.options.releaseSeconds??20)*1000;this.releaseTimer=setTimeout(()=>{if(this.state.phase!=='RELEASE'||!this.state.releaseFailed)return;this.setPhase('IDLE');this.startLoopNext();},holdMs);}
     }
   }
 
