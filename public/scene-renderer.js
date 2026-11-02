@@ -15,7 +15,7 @@ export function renderSceneSvg(scene,{line=scene.line??scene.keyword,words=[],ti
   const props=safe.props.map((prop,i)=>renderProp(prop,i,local,quality)).join('');
   const mascot=mascotSvg(interlude?{...safe.mascot,pose:'lookup'}:safe.mascot,safe.mood,local,quality);
   const labels=renderLine(line,words,time,ink,safe.keyword);
-  const title=`<g${layerFilter}><text x="400" y="196" text-anchor="middle" fill="${ink}" font-family="Chewy" font-size="54" font-weight="400" class="keyword">${escapeXml(safe.keyword.toUpperCase())}</text></g>`;
+  const title=interlude?'':`<g${layerFilter}><text x="400" y="196" text-anchor="middle" fill="${ink}" font-family="Chewy" font-size="54" font-weight="400" class="keyword">${escapeXml(safe.keyword.toUpperCase())}</text></g>`;
   const foreground=`${props}${mascot}${title}<g${layerFilter}>${labels}</g>`;
   const cameraTime=Math.max(0,time-cameraStart);const drift=interlude?Math.sin(cameraTime*.42)*8:0;const scale=interlude?1.018:1;
   const content=`${backdrop}${ground}${foreground}`;
@@ -32,7 +32,7 @@ function renderProp(prop,index,time,quality){
   else if(prop.enter==='pop'){const overshoot=progress<.72?.1*Math.sin(progress/.72*Math.PI):0;transform=`translate(400 320) scale(${(.08+.92*eased+overshoot).toFixed(3)}) translate(-400 -320)`;}
   const clip=prop.enter==='draw'?`<defs><clipPath id="draw-${index}"><rect x="0" y="0" width="${(800*eased).toFixed(2)}" height="450"/></clipPath></defs>`:'';
   const filter=quality==='export'?'':' filter="url(#clay)"';
-  return `<g${filter}>${clip}<g transform="${transform}" opacity="${opacity.toFixed(3)}"${prop.enter==='draw'?` clip-path="url(#draw-${index})"`:''}>${prop.svg}</g></g>`;
+  return `<g transform="translate(0 -25)"><g${filter}>${clip}<g transform="${transform}" opacity="${opacity.toFixed(3)}"${prop.enter==='draw'?` clip-path="url(#draw-${index})"`:''}>${prop.svg}</g></g></g>`;
 }
 
 function renderLine(line,words,time,ink,keyword){
@@ -53,11 +53,11 @@ function renderLine(line,words,time,ink,keyword){
   const layout=rows.map((items,rowIndex)=>{
     const total=items.reduce((sum,item)=>sum+wordWidth(item.word),0)+Math.max(0,items.length-1)*10;
     let x=(800-total)/2;
-    return items.map(item=>{const w=wordWidth(item.word),cx=x+w/2;x+=w+10;return{...item,x:cx,y:324+rowIndex*45};});
+    return items.map(item=>{const w=wordWidth(item.word),cx=x+w/2;x+=w+10;return{...item,x:cx,y:(rows.length===1?405:390+rowIndex*26)};});
   }).flat();
   let minX=Infinity,maxX=-Infinity;
   for(const item of layout){const half=wordWidth(item.word)/2;minX=Math.min(minX,item.x-half);maxX=Math.max(maxX,item.x+half);}
-  const pill='<rect x="'+Math.max(80,minX-24)+'" y="294" width="'+Math.min(640,maxX-minX+48)+'" height="'+(rows.length===1?76:120)+'" rx="24" fill="#2a2622" fill-opacity=".82" stroke="#c96f4a" stroke-opacity=".72" stroke-width="3"/>';
+  const pill='<rect x="'+Math.max(80,minX-24)+'" y="376" width="'+Math.min(640,maxX-minX+48)+'" height="52" rx="24" fill="#2a2622" fill-opacity=".82" stroke="#c96f4a" stroke-opacity=".72" stroke-width="3"/>';
   const texts=layout.map(item=>{
     const timing=words[item.index],active=Boolean(timing&&time>=timing.start&&time<=timing.end);
     let opacity=1,scale=active?1.06:1;
@@ -69,7 +69,7 @@ function renderLine(line,words,time,ink,keyword){
 export function renderScene(container,scene,options={}){container.innerHTML=renderSceneSvg(scene,options);return container.querySelector('svg');}
 
 function mascotSvg(spec,mood,time,quality){
-  const pose=POSES.has(spec.pose)?spec.pose:'stand';const x=clamp(spec.x,55,745);const y=clamp(spec.y,150,450);const scale=clamp(spec.scale,.4,1.5);const mirror=spec.facing==='left'?-1:1;
+  const pose=POSES.has(spec.pose)?spec.pose:'stand';const scale=clamp(spec.scale,.4,1.5);const x=clamp(spec.x,43*scale+5,795-43*scale);const y=clamp(spec.y,25+100*scale,300);const mirror=spec.facing==='left'?-1:1;
   const config={stand:{bodyY:0,tilt:0,arm:'down',legs:'stand'},sit:{bodyY:14,tilt:0,arm:'rest',legs:'sit'},walk:{bodyY:0,tilt:-5,arm:'swing',legs:'walk'},blow:{bodyY:0,tilt:4,arm:'blow',legs:'stand'},lookup:{bodyY:0,tilt:-4,arm:'up',legs:'stand'},puzzled:{bodyY:0,tilt:5,arm:'puzzle',legs:'stand'},sleep:{bodyY:8,tilt:-8,arm:'rest',legs:'sit'},wave:{bodyY:0,tilt:0,arm:'wave',legs:'stand'},hug:{bodyY:0,tilt:2,arm:'hug',legs:'stand'},jump:{bodyY:-20,tilt:0,arm:'up',legs:'jump'}}[pose];
   const bob=Math.sin(time*2.4)*2;const blinkPhase=(time+.37)%5;const blink=blinkPhase>4.68&&blinkPhase<4.82?.08:1;
   const eyes=pose==='sleep'?`<path d="M-17 -58 q7 7 14 0 M8 -58 q7 7 14 0" stroke="${PALETTE.ink}" stroke-width="4" fill="none" stroke-linecap="round"/>`:`<g transform="translate(0 -59) scale(1 ${blink}) translate(0 59)"><circle cx="-13" cy="-59" r="5" fill="${PALETTE.ink}"/><circle cx="-14" cy="-61" r="1.7" fill="${PALETTE.cream}"/><circle cx="13" cy="-59" r="5" fill="${PALETTE.ink}"/><circle cx="12" cy="-61" r="1.7" fill="${PALETTE.cream}"/></g>`;
@@ -78,7 +78,7 @@ function mascotSvg(spec,mood,time,quality){
   const clayLegs='<g fill="none" stroke="#ffd23f" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M-14 9 L-17 '+(27+step).toFixed(1)+' Q-22 '+(31+step).toFixed(1)+' -28 '+(31+step).toFixed(1)+' M14 9 L17 '+(27-step).toFixed(1)+' Q22 '+(31-step).toFixed(1)+' 28 '+(31-step).toFixed(1)+'"/></g>';
   const walk=Math.sin(time*8)*8;const legs=config.legs==='sit'?'<path d="M-20 12 Q-38 20 -45 18 M20 12 Q38 20 45 18"/>':config.legs==='walk'?`<path d="M-14 12 L${(-24-walk).toFixed(1)} 27 M14 12 L${(24+walk).toFixed(1)} 27"/>`:config.legs==='jump'?'<path d="M-14 10 L-34 22 M14 10 L34 22"/>':'<path d="M-14 12 L-18 27 M14 12 L18 27"/>';
   const filter=quality==='export'?'':' filter="url(#clay)"';
-  return `<g${filter}><g transform="translate(${x} ${y+bob+config.bodyY})"><g transform="scale(${mirror*scale} ${scale})"><g transform="rotate(${config.tilt})"><g fill="none" stroke="${PALETTE.ink}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${clayLegs}${arms}/>${legs}/></g><g class="mascot-body"><path d="M-43 -20 Q-49 -76 -22 -88 Q0 -98 23 -87 Q49 -75 43 -20 Q38 9 0 14 Q-38 9 -43 -20Z" fill="${PALETTE.yellow}" stroke="${PALETTE.mustard}" stroke-width="5"/><path d="M5 -86 Q42 -78 43 -20 Q38 8 0 14 Q18 -10 5 -86Z" fill="${PALETTE.shade}" opacity=".6"/>${eyes}<ellipse cx="-27" cy="-43" rx="7" ry="4" fill="${PALETTE.rose}"/><ellipse cx="27" cy="-43" rx="7" ry="4" fill="${PALETTE.rose}"/><path d="M-5 -38 Q0 -33 5 -38" fill="none" stroke="${PALETTE.ink}" stroke-width="3" stroke-linecap="round"/></g></g></g></g></g>`;
+  return `<g transform="translate(0 -25)"><g${filter}><g transform="translate(${x} ${y+bob+config.bodyY})"><g transform="scale(${mirror*scale} ${scale})"><g transform="rotate(${config.tilt})"><g fill="none" stroke="${PALETTE.ink}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${clayLegs}${arms}/>${legs}</g><g class="mascot-body"><path d="M-43 -20 Q-49 -76 -22 -88 Q0 -98 23 -87 Q49 -75 43 -20 Q38 9 0 14 Q-38 9 -43 -20Z" fill="${PALETTE.yellow}" stroke="${PALETTE.mustard}" stroke-width="5"/><path d="M5 -86 Q42 -78 43 -20 Q38 8 0 14 Q18 -10 5 -86Z" fill="${PALETTE.shade}" opacity=".6"/>${eyes}<ellipse cx="-27" cy="-43" rx="7" ry="4" fill="${PALETTE.rose}"/><ellipse cx="27" cy="-43" rx="7" ry="4" fill="${PALETTE.rose}"/><path d="M-5 -38 Q0 -33 5 -38" fill="none" stroke="${PALETTE.ink}" stroke-width="3" stroke-linecap="round"/></g></g></g></g></g></g>`;
 }
 
 function normalizeScene(scene){return{keyword:String(scene.keyword??'VERSE'),mood:MOODS[scene.mood]?scene.mood:'day',ground:Boolean(scene.ground),mascot:scene.mascot??{pose:'stand',x:600,y:370,scale:1,facing:'left'},props:Array.isArray(scene.props)?scene.props.filter(prop=>prop&&typeof prop.svg==='string'&&ENTER.has(prop.enter)):[]};}

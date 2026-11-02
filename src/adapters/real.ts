@@ -106,33 +106,35 @@ function localCheck(text: string): 'ok' | 'blocked' {
 
 type PascalArtifact = { name?: string; content_type?: string; url?: string };
 type PascalJob = { id: string; status: string; result?: { artifacts?: PascalArtifact[]; lyrics_lines?: Array<{ text: string; start: number; end?: number }> }; playback_url?: string; error_code?: string; error_message?: string };
+class PascalFailure extends Error { constructor(readonly errorCode:string,readonly jobId:string|undefined,message:string){super(message);this.name='PascalFailure';} }
 type PascalModels = Array<{ id?: string; name?: string; parameters_schema?: Record<string, unknown> }>;
 export class PascalProvider implements MusicProvider {
-  constructor(private readonly apiKey = config.pascalApiKey, private readonly baseUrl = config.pascalBaseUrl) {}
+  constructor(private readonly apiKey = config.pascalApiKey, private readonly baseUrl = config.pascalBaseUrl, private readonly wait = (ms: number) => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms))) {}
 
-  async render(style: string, lines: CandidateLine[], mood = 'playful', release = false): Promise<MusicClip> {
+  async render(style: string, lines: CandidateLine[], mood = 'playful', release = false, strict = false, onRetry?: (attempt: number, delayMs: number) => void): Promise<MusicClip> {
     if (!this.apiKey) return new MockMusicProvider().render(style, lines, mood, release);
-    for (let attempt=0; attempt<2; attempt+=1) {
-      try { return await this.renderReal(style, lines, mood, release); }
-      catch (error) { if(attempt===0) console.warn('[Pascal music] transient failure; retrying once:', error instanceof Error ? error.message : error); else warn('Pascal music',error); }
+    const delays=[3000,8000];let lastError:unknown;
+    for(let attempt=0;attempt<3;attempt+=1){
+      try{return await this.renderReal(style,lines,mood,release,strict);}
+      catch(error){lastError=error;const detail=error instanceof PascalFailure?error:new PascalFailure('request_failed',undefined,error instanceof Error?error.message:String(error));console.error(`[Pascal music] attempt=${attempt+1} error_code=${detail.errorCode} job_id=${detail.jobId??'unknown'} message=${detail.message}`);if(attempt<2){onRetry?.(attempt+1,delays[attempt]!);await this.wait(delays[attempt]!);}}
     }
-    return new MockMusicProvider().render(style, lines, mood, release);
+    throw lastError instanceof Error?lastError:new Error('Pascal music render failed');
   }
 
-  private async renderReal(style: string, lines: CandidateLine[], mood: string, release: boolean): Promise<MusicClip> {
-    const lyrics = formatLyrics(lines);
+  private async renderReal(style: string, lines: CandidateLine[], mood: string, release: boolean, strict: boolean): Promise<MusicClip> {
+    const lyrics = formatLyrics(lines, strict);
     const model = release ? config.pascalReleaseModel : config.pascalMusicModel;
     const long = release;
     const descriptor = config.genres[style] ?? `${style} music`;
-    const prompt = `${style}, ${descriptor}, ${mood}; vocals start immediately, no long intro`;
+    const prompt = `${style}, ${descriptor}, ${mood}; sing only the supplied lyrics exactly as written and in order. Do not add, repeat, paraphrase, or invent words, verses, hooks, or vocalizations. No new lyrics. Vocals start immediately; an instrumental outro is allowed.${strict?' Strict take: perform only the exact supplied lines, once each, in order; no ad-libs or extra vocals.':''}`;
     const duration = long ? 30 : 10;
     const job = await this.requestJson<PascalJob>('/music', { model, prompt, lyrics, duration_seconds: duration, bpm: 100 });
     const finished = await this.pollJob(job);
     const artifact = finished.result?.artifacts?.find((item) => item.content_type?.startsWith('audio/')) ?? finished.result?.artifacts?.[0];
     const url = artifact?.url ?? finished.playback_url;
-    if (!url) throw new Error('Pascal job completed without an audio artifact URL');
+    if (!url) throw new PascalFailure('no_audio',finished.id,'Pascal job completed without an audio artifact URL');
     const bytesResponse = await fetch(url);
-    if (!bytesResponse.ok) throw new Error(`Audio download returned ${bytesResponse.status}`);
+    if (!bytesResponse.ok) throw new PascalFailure(`audio_download_${bytesResponse.status}`,finished.id,`Audio download returned ${bytesResponse.status}`);
     const bytes = Buffer.from(await bytesResponse.arrayBuffer());
     const ext = artifact?.content_type?.includes('wav') ? '.wav' : artifact?.content_type?.includes('mpeg') ? '.mp3' : '.audio';
     const fileName = `${randomUUID()}${ext}`;
@@ -141,20 +143,23 @@ export class PascalProvider implements MusicProvider {
     const durationSec = await measureDuration(bytes, ext, resolve(mediaDir, fileName));
     const lyricsLines = alignLyricLines(lines, finished.result?.lyrics_lines, durationSec);
     const words = lyricsLines.flatMap((line) => spreadLineWords(line.text, line.start, line.end));
-    const timings = await this.transcribe(bytes, fileName, ext).catch((error) => { warn('Pascal ASR', error); return null; });
-    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, words: refineTimings(words, timings) };
+    const timings = await this.transcribe(bytes, fileName, ext).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; });
+    const fidelityScore = scoreSungFidelity(lines, timings ?? []);
+    console.info(`[Music fidelity] job_id=${finished.id} score=${fidelityScore.toFixed(3)} strict=${strict}`);
+    const sungSegments=(finished.result?.lyrics_lines??[]).map((item,index,all)=>({text:item.text,start:item.start,end:item.end??all[index+1]?.start??durationSec}));
+    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments, words: refineTimings(words, timings), fidelityScore, isMock:false };
   }
 
   private async pollJob(initial: PascalJob): Promise<PascalJob> {
     let job = initial;
-    if (job.status === 'failed') throw new Error(`${job.error_code ?? 'failed'}: ${job.error_message ?? 'Pascal job failed'}`);
+    if (job.status === 'failed') throw new PascalFailure(job.error_code??'failed',job.id,job.error_message??'Pascal job failed');
     for (let i = 0; job.status !== 'succeeded' && i < 120; i += 1) {
       if (!job.id) throw new Error('Pascal returned an incomplete job object');
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 1500));
       job = await this.requestJson<PascalJob>(`/jobs/${encodeURIComponent(job.id)}`);
-      if (job.status === 'failed') throw new Error(`${job.error_code ?? 'failed'}: ${job.error_message ?? 'Pascal job failed'}`);
+      if (job.status === 'failed') throw new PascalFailure(job.error_code??'failed',job.id,job.error_message??'Pascal job failed');
     }
-    if (job.status !== 'succeeded') throw new Error('Pascal job timed out');
+    if (job.status !== 'succeeded') throw new PascalFailure('job_timeout',job.id,'Pascal job timed out');
     return job;
   }
 
@@ -171,7 +176,7 @@ export class PascalProvider implements MusicProvider {
 
   private async requestJson<T>(path: string, body?: unknown): Promise<T> {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
-    if (!response.ok) throw new Error(`Pascal ${path} returned ${response.status}`);
+    if (!response.ok) throw new PascalFailure(`http_${response.status}`,undefined,`Pascal ${path} returned ${response.status}`);
     return await response.json() as T;
   }
 
@@ -222,9 +227,17 @@ function ttsParams(schema: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
-export function formatLyrics(lines: CandidateLine[]): string {
-  const sections = ['[Verse 1]', '[Chorus]', '[Verse 2]', '[Bridge]'];
-  return lines.map((line, index) => `${index >= sections.length ? '[Chorus]' : sections[index]}\n${line.text}`).join('\n');
+export function formatLyrics(lines: CandidateLine[], _strict = false): string {
+  const sections = ['[Verse 1]', '[Verse 2]', '[Bridge]', '[Verse 3]'];
+  return lines.map((line, index) => `${sections[index] ?? `[Verse ${index + 1}]`}\n${line.text}`).join('\n');
+}
+
+export function scoreSungFidelity(lines:CandidateLine[],transcript:TimedWord[]):number{
+  const expected=lines.flatMap(line=>line.text.split(/\s+/).map(word=>word.toLowerCase().replace(/[^\p{L}\p{N}]/gu,''))).filter(Boolean);
+  const heard=transcript.map(item=>item.word.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'')).filter(Boolean);
+  if(!expected.length)return 1;const previous=new Uint32Array(heard.length+1),current=new Uint32Array(heard.length+1);
+  for(const word of expected){for(let j=1;j<=heard.length;j++)current[j]=word===heard[j-1]?previous[j-1]!+1:Math.max(previous[j]!,current[j-1]!);previous.set(current);current.fill(0);}
+  return previous[heard.length]!/expected.length;
 }
 
 type LineTiming = { text: string; start: number; end: number };

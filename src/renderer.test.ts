@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import { fallbackScene } from './scenes.js';
-import { exportPageHtml, selectVideoFrame } from './video-export.js';
+import { buildVideoTimeline, exportPageHtml, selectVideoFrame } from './video-export.js';
 
 describe('clay renderer skill examples',()=>{
   it('produces an 800x450 SVG scene for each worked lyric example',async()=>{
@@ -27,7 +27,15 @@ describe('clay renderer skill examples',()=>{
   it('lays lyrics out in a centred, readable lower-third block',()=>{
     const require=createRequire(import.meta.url);const {renderSceneSvg}=require('../public/scene-renderer.js') as {renderSceneSvg:(scene:unknown,options?:unknown)=>string};
     const text='chai at midnight with the city lights';const svg=renderSceneSvg(fallbackScene(text,'night'),{line:text,words:[{word:'midnight',start:1,end:2}],time:1.5,quality:'export'});
-    expect(svg).toContain('fill="#2f2a3a"');expect(svg).toContain('class="lyric-block"');expect(svg).toContain('font-size="37.4"');expect(svg).toContain('font-size="22"');expect(svg).toContain('y="324"');expect(svg).toContain('font-family="Chewy"');
+    expect(svg).toContain('fill="#2f2a3a"');expect(svg).toContain('class="lyric-block"');expect(svg).toContain('font-size="37.4"');expect(svg).toContain('font-size="22"');expect(svg).toContain('y="405"');expect(svg).toContain('font-family="Chewy"');
     expect((svg.match(/class="lyric-word/g)??[]).length).toBe(7);expect(svg).toContain('class="lyric-word active"');
+  });
+  it('matches repeated sung segments A B C B C and turns unmatched segments into short interludes',()=>{
+    const lines=['A','B','C'].map((text)=>({lineKey:text,line:{text:'line '+text,userId:text,login:text},scene:fallbackScene('line '+text,'night'),start:0,end:0,words:[]}));
+    const segments=['line A','line B','line C','line B','line C','instrumental fireworks'].map((text,index)=>({text,start:index*3,end:(index+1)*3}));
+    const timeline=buildVideoTimeline(segments,lines,20);
+    expect(timeline.filter(item=>!item.interlude).map(item=>item.lineKey)).toEqual(['A','B','C','B','C']);
+    expect(timeline.some(item=>item.interlude&&item.words.length===0)).toBe(true);expect(timeline.every(item=>item.end-item.start<=8)).toBe(true);
+    expect(selectVideoFrame(10,timeline)?.entry.lineKey).toBe('B');
   });
 });

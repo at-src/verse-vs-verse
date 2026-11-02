@@ -8,6 +8,7 @@ type TokenRow = { user_id: string; login: string; access_token: string; refresh_
 type EventEnvelope = { metadata: { message_type: string; subscription_type?: string }; payload: Record<string, any> };
 
 export class TwitchService {
+  private lastHelpCommandReply = 0;
   private socket: WebSocket | null = null;
   private sessionId: string | null = null;
   private reconnectUrl: string | null = null;
@@ -104,10 +105,15 @@ export class TwitchService {
       const text = String(message.message?.text ?? '');
       // no reply per line or vote (spam and rate limits); the server announces each phase once instead
       const credited = applyActorPersona(login, userId, text, config.demoActorLogins);
-      if (credited.text.trim().toLowerCase() === '!song') {
+      const command=credited.text.trim().toLowerCase();
+      if(command==='!queue'||command==='!help'){
+        const now=Date.now();if(now-this.lastHelpCommandReply<10_000)return;this.lastHelpCommandReply=now;
+        if(command==='!help')await this.sendChat('Type !line <words> during WRITE; vote !1–!4 during VOTE.');
+        else{const state=this.engine.snapshot();let left='unknown';if(state.deadline)left=String(Math.max(0,Math.ceil((state.deadline-now)/1000)));else if(state.phase==='PLAY'&&state.clip&&state.clipStartedAt!==null){const end=state.clip.lineTimings?.at(-1)?.end??state.clip.words.at(-1)?.end??state.clip.durationSec;left=String(Math.max(0,Math.ceil(end+2-(now-state.clipStartedAt)/1000)));}await this.sendChat(`Phase ${state.phase}; ${left} seconds left; ${state.song.length+state.lines.length} lines submitted.`);}
+      } else if (command === '!song') {
         const state = this.engine.snapshot(); const writers = [...new Set(state.song.map((line) => `@${line.login}`))];
         await this.sendChat(state.song.length ? `Now playing "${state.title}" — writers: ${writers.join(', ') || 'chat'}` : 'No song is playing right now.');
-      } else if (credited.text.trim().toLowerCase() === '!skip') {
+      } else if (command === '!skip') {
         const broadcaster = message.broadcaster_user_id === userId;
         const moderator = message.badges?.some((badge: { set_id?: string }) => badge.set_id === 'moderator');
         if ((broadcaster || moderator) && this.engine.skipPlay()) await this.sendChat('Skipping this clip.');

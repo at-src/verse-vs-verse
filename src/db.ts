@@ -32,6 +32,9 @@ db.exec(`
     audio_url TEXT NOT NULL,
     video_url TEXT,
     video_status TEXT NOT NULL DEFAULT 'pending',
+    fidelity_score REAL,
+    release_status TEXT NOT NULL DEFAULT 'ready',
+    release_error TEXT,
     duration_sec REAL NOT NULL,
     lines_json TEXT NOT NULL
   );
@@ -44,4 +47,7 @@ db.exec(`
   );
 `);
 const errorColumn = new Set((db.prepare('PRAGMA table_info(songs)').all() as Array<{ name: string }>).map((column) => column.name));
+if (!errorColumn.has('fidelity_score')) db.exec('ALTER TABLE songs ADD COLUMN fidelity_score REAL');
+if (!errorColumn.has('release_status')) db.exec("ALTER TABLE songs ADD COLUMN release_status TEXT NOT NULL DEFAULT 'ready'");
+if (!errorColumn.has('release_error')) db.exec('ALTER TABLE songs ADD COLUMN release_error TEXT');
 if (!errorColumn.has('video_error')) db.exec('ALTER TABLE songs ADD COLUMN video_error TEXT');

@@ -23,6 +23,7 @@ export class MockMusicProvider implements MusicProvider {
     return {
       audioUrl: `/media/mock-tone.wav?duration=${durationSec}`,
       durationSec,
+      isMock: true,
       lineTimings: lines.map((line, index) => ({ text: line.text, start: durationSec * index / Math.max(lines.length, 1), end: durationSec * (index + 1) / Math.max(lines.length, 1) })),
       words: words.map((word, index) => ({
         word,
