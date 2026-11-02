@@ -125,7 +125,9 @@ export class RoundEngine {
     try { shortlist = await this.options.judge.choose(this.state.lines, this.state.song, this.state.style, this.state.mood); }
     catch (error) { console.warn('[LineJudge] falling back to mock:', error); shortlist = this.state.lines.slice(0, 4); }
     const candidates = new Map(this.state.lines.map((line) => [line.text, line]));
-    this.state.shortlist = shortlist.filter((line, index, all) => candidates.has(line.text) && all.findIndex((item) => item.text === line.text) === index).slice(0, 4);
+    const ranked = shortlist.filter((line, index, all) => candidates.has(line.text) && all.findIndex((item) => item.text === line.text) === index);
+    // the judge ranks; it must not leave chat with a one-option vote, so top up with the other moderated lines
+    this.state.shortlist = [...ranked, ...this.state.lines.filter((line) => !ranked.some((item) => item.text === line.text))].slice(0, 4);
     if (!this.state.shortlist.length) {
       console.info('[Round] no viewer lines were accepted; skipping this verse without inventing lyrics');
       if(this.state.round>=this.state.roundsPerSong){this.setPhase('IDLE');if(this.state.loopMode)this.startLoopNext();}else await this.beginWrite();

@@ -15,7 +15,7 @@ export function renderSceneSvg(scene,{line=scene.line??scene.keyword,words=[],ti
   const props=safe.props.map((prop,i)=>renderProp(prop,i,local,quality)).join('');
   const mascot=mascotSvg(interlude?{...safe.mascot,pose:'lookup'}:safe.mascot,safe.mood,local,quality);
   const labels=renderLine(line,words,time,ink,safe.keyword);
-  const title=interlude?'':`<g${layerFilter}><text x="400" y="196" text-anchor="middle" fill="${ink}" font-family="Chewy" font-size="54" font-weight="400" class="keyword">${escapeXml(safe.keyword.toUpperCase())}</text></g>`;
+  const title=interlude?'':`<g${layerFilter}><text x="400" y="84" text-anchor="middle" fill="${ink}" font-family="Chewy" font-size="54" font-weight="400" class="keyword">${escapeXml(safe.keyword.toUpperCase())}</text></g>`;
   const foreground=`${props}${mascot}${title}<g${layerFilter}>${labels}</g>`;
   const cameraTime=Math.max(0,time-cameraStart);const drift=interlude?Math.sin(cameraTime*.42)*8:0;const scale=interlude?1.018:1;
   const content=`${backdrop}${ground}${foreground}`;
