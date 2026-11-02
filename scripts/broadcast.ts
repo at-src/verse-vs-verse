@@ -11,6 +11,7 @@ import net from 'node:net';
 import WebSocket from 'ws';
 import { db } from '../src/db.js';
 import { config } from '../src/config.js';
+import { freshToken, type TokenRow } from './tokens.js';
 
 const FPS = 24, RATE = 44100, CH = 2, W = 1280, H = 720;
 const localOnly = process.argv.includes('--local');
@@ -21,8 +22,9 @@ const require = createRequire(import.meta.url);
 const CDP = require('chrome-remote-interface');
 
 async function streamKey(): Promise<string> {
-  const row = db.prepare("SELECT user_id, access_token FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as { user_id: string; access_token: string } | undefined;
-  if (!row) throw new Error('Connect the broadcaster account at /auth/login first.');
+  const stored = db.prepare("SELECT user_id, login, access_token, refresh_token, expires_at FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as TokenRow | undefined;
+  if (!stored) throw new Error('Connect the broadcaster account at /auth/login first.');
+  const row = await freshToken(stored);
   const response = await fetch(`https://api.twitch.tv/helix/streams/key?broadcaster_id=${row.user_id}`, { headers: { 'Client-Id': config.twitchClientId, Authorization: `Bearer ${row.access_token}` } });
   const key = ((await response.json()) as { data?: Array<{ stream_key: string }> }).data?.[0]?.stream_key;
   if (!key) throw new Error(`Could not read the stream key (${response.status}). Re-authorize at /auth/login to grant channel:read:stream_key.`);
@@ -59,7 +61,7 @@ async function main(): Promise<void> {
   let client: any; for (let i = 0; i < 50 && !client; i++) { try { client = await CDP({ port: 9333 }); } catch { await new Promise((r) => setTimeout(r, 200)); } }
   const { Page, Emulation, Runtime } = client;
   await Promise.all([Page.enable(), Runtime.enable(), Emulation.setDeviceMetricsOverride({ width: W, height: H, deviceScaleFactor: 1, mobile: false })]);
-  await Page.navigate({ url: `${base}/overlay` }); await Page.loadEventFired();
+  await Page.navigate({ url: `${base}/overlay?stream=1` }); await Page.loadEventFired();
   // the overlay is transparent for OBS; give the stream a backdrop of its own
   await Runtime.evaluate({ expression: `document.documentElement.style.background='radial-gradient(ellipse at 30% 30%,#3a3150 0,#1b1722 60%,#120f17 100%)';document.body.style.background='transparent';` });
   let latest: Buffer | null = null;

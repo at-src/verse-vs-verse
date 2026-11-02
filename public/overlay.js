@@ -1,4 +1,6 @@
 import { renderScene, renderTransitionSvg, TRANSITION_SECONDS } from './scene-renderer.js';
+import { startStreamLayer } from './stream-layer.js';
+const listeners=[];
 let shown=null,fading=null;
 
 const $=(id)=>document.getElementById(id);
@@ -6,13 +8,14 @@ let state;let activeClip=null;let audioStartedFor=null;let animationFrame=0;
 const player=$('player');
 const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
 ws.onmessage=({data})=>{
-  const event=JSON.parse(data);
+  const event=JSON.parse(data);listeners.forEach((fn)=>fn(event));
   if(event.type==='STATE'){state=event.state;if(state.phase==='PRODUCE'||(state.phase==='RELEASE'&&!state.clip)){player.pause();activeClip=null;audioStartedFor=null;}render();driveAnimation();}
   if(event.type==='SCENE'){if(state){state.scenes??={};state.scenes[lineKey(event.line)]=event.scene;}render();}
   if(event.type==='VOTE_TALLY'&&state){state.votes=event.counts;render();}
   if(event.type==='CLIP')play(event.clip);
   if(event.type==='VOICE'){const voice=new Audio(event.audioUrl);voice.play().catch(()=>undefined);}
 };
+if(new URLSearchParams(location.search).has('stream'))startStreamLayer(()=>state,(fn)=>listeners.push(fn));
 fetch('/api/state').then((res)=>res.json()).then((value)=>{state=value;render();driveAnimation();});
 // countdowns and the "making the song" timer tick on their own, not only when an event arrives
 setInterval(()=>{if(state&&(state.deadline||state.phase==='PRODUCE'||state.phase==='RELEASE'))renderPanel();},500);
@@ -32,10 +35,10 @@ function renderPanel(){
   $('phase').textContent=`VERSE vs VERSE · ${state.phase}`;
   $('countdown').textContent=state.deadline?`${Math.max(0,Math.ceil((state.deadline-Date.now())/1000))} seconds`:'';
   const producing=state.phase==='PRODUCE'||(state.phase==='RELEASE'&&!state.clip&&!state.releaseFailed);
-  const headlines={IDLE:'The chat writes<br>the next hit.',WRITE:'Drop your line.',SHORTLIST:'The room is listening…',VOTE:'Pick the line.',PRODUCE:state.musicRetrying?'The band is retuning…':'Making a little magic…',PLAY:'Our song so far.',RELEASE:state.musicRetrying?'The band is retuning…':state.clip?state.title:'Mixing the final song…'};
+  const headlines={IDLE:'The chat writes<br>the next hit.',WRITE:'Drop your line.',SHORTLIST:'The room is listening…',VOTE:'Line vs line. Vote!',PRODUCE:state.musicRetrying?'The band is retuning…':'Making a little magic…',PLAY:'Our song so far.',RELEASE:state.musicRetrying?'The band is retuning…':state.clip?state.title:'Mixing the final song…'};
   $('headline').innerHTML=headlines[state.phase];
   if(state.phase==='WRITE')$('content').innerHTML=state.lines.map((line)=>`<div>@${escapeHtml(line.login)} · ${escapeHtml(line.text)}</div>`).join('');
-  else if(state.phase==='VOTE')$('content').innerHTML=state.shortlist.map((line,i)=>`<div>!${i+1} · ${escapeHtml(line.text)} <small>(${state.votes[i]||0})</small></div>`).join('');
+  else if(state.phase==='VOTE'){const total=Math.max(1,state.votes.reduce((a,b)=>a+(b||0),0));const lead=Math.max(0,...state.votes);$('content').innerHTML=`<div class="battle">${state.shortlist.map((line,i)=>`${i?'<div class="battle-vs">VS</div>':''}<div class="battle-card${(state.votes[i]||0)===lead&&lead>0?' leading':''}"><div class="battle-head"><b>!${i+1}</b><span>@${escapeHtml(line.login)}</span><em>${state.votes[i]||0}</em></div><div class="battle-line">${escapeHtml(line.text)}</div><div class="battle-bar"><i style="width:${Math.round(100*(state.votes[i]||0)/total)}%"></i></div></div>`).join('')}</div>`;}
   else if(state.phase==='RELEASE'&&state.releaseFailed)$('content').textContent='Release failed. Retry is available in the dashboard.';
   else if(state.phase==='RELEASE')$('content').innerHTML=`<div>${state.song.map((line)=>escapeHtml(line.text)).join(' · ')}</div>`;
   else if(producing){

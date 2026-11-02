@@ -139,6 +139,11 @@ export function renderTransitionSvg(current,previous,progress){
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450"><g>${incoming}</g><g opacity="${(1-e).toFixed(3)}" transform="translate(400 225) scale(${(1+e*.07).toFixed(4)}) translate(-400 -225)">${outgoing}</g></svg>`;
 }
 
+// The channel's on-camera streamer: the same character, drawn alone on a transparent canvas for the stream layout.
+export function renderStreamerSvg({pose='idle',expression='happy',time=0,poseTime=time,bpm=100,facing='right',hop=0}={}){
+  const mascot=drawMascot({pose,x:400,y:322,scale:1.3,facing,expression},'night',poseTime,'overlay',Math.max(40,Number(bpm)||100)/60,[],time,[]);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="250 70 300 320"><defs><filter id="clay" x="-15%" y="-15%" width="130%" height="130%"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" result="n"/><feDiffuseLighting in="n" lighting-color="#fff" surfaceScale="1.4" result="l"><feDistantLight azimuth="225" elevation="58"/></feDiffuseLighting><feComposite in="l" in2="SourceGraphic" operator="in" result="t"/><feBlend in="SourceGraphic" in2="t" mode="multiply" result="b"/><feDropShadow dx="4" dy="7" stdDeviation="6" flood-color="#1a0f24" flood-opacity=".45"/></filter></defs><g transform="translate(0 ${(-hop).toFixed(1)})">${mascot}</g></svg>`;
+}
 // Exposed for preview pages and renderer tests without duplicating the prop catalog.
 export const clayPropNames=Object.freeze(Object.keys(LIB));
 export function getClayProp(name){const key=aliases[String(name||'').toLowerCase()]||String(name||'').toLowerCase();const entry=LIB[key];return entry?{name:key,svg:entry.svg,anchor:entry.anchor,motion:entry.motion}:null;}

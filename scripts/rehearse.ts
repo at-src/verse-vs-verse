@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { db } from '../src/db.js';
 import { config } from '../src/config.js';
+import { allTokens } from './tokens.js';
 
 type Plan = { style: string; mood: string; settings?: Record<string, unknown>; opener?: Array<{ from: string; text: string }>;
   rounds: Array<{ lines: Record<string, string>; vote: string }> }; // vote = whose line every account votes for
@@ -16,8 +17,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const base = `http://localhost:${config.port}`;
 const api = async (path: string, body?: unknown) => (await fetch(base + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {})).json() as Promise<any>;
 
-function accounts(): { broadcaster: Account; byLogin: Map<string, Account> } {
-  const rows = db.prepare('SELECT user_id, login, access_token FROM twitch_tokens').all() as Array<{ user_id: string; login: string; access_token: string }>;
+async function accounts(): Promise<{ broadcaster: Account; byLogin: Map<string, Account> }> {
+  const rows = await allTokens();
   const list = rows.map((row) => ({ id: row.user_id.replace(/^demo-actor:/, ''), login: row.login.toLowerCase(), token: row.access_token, actor: row.user_id.startsWith('demo-actor:') }));
   const broadcaster = list.find((item) => !item.actor);
   if (!broadcaster) throw new Error('Connect the broadcaster at /auth/login first.');
@@ -33,7 +34,7 @@ async function say(from: Account, broadcaster: Account, text: string): Promise<v
 
 async function main(): Promise<void> {
   const plan = JSON.parse(await readFile(process.argv[2] ?? 'demo-scripts/demo-song.json', 'utf8')) as Plan;
-  const { broadcaster, byLogin } = accounts();
+  const { broadcaster, byLogin } = await accounts();
   const who = (login: string) => { const account = byLogin.get(login.toLowerCase()); if (!account) throw new Error(`@${login} is not connected (add it at ${base}/auth/login?actor=1)`); return account; };
   for (const round of plan.rounds) for (const login of [...Object.keys(round.lines), round.vote]) who(login);
 
