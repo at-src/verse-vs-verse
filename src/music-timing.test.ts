@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alignLyricLines, chatLineShare, fillSegmentStarts, formatLyrics } from './adapters/real.js';
+import { alignLyricLines, chatLineShare, fillSegmentStarts, formatLyrics, releaseCutPoint } from './adapters/real.js';
 const lines = ['line one','line two','line three','line four','line five'].map((text,index)=>({text,userId:String(index),login:'viewer'}));
 describe('music lyrics timing',()=>{
   it('formats supplied lyrics as plain lines in order, with no section tags',()=>expect(formatLyrics(lines)).toBe('line one\nline two\nline three\nline four\nline five'));
@@ -7,6 +7,13 @@ describe('music lyrics timing',()=>{
     const result=fillSegmentStarts([{text:'a',start:0},{text:'b'},{text:'c'},{text:'d',start:9},{text:'e'}],12);
     expect(result.map(({start})=>start)).toEqual([0,3,6,9,10.5]);
     expect(result.map(({end})=>end)).toEqual([3,6,9,10.5,12]);
+  });
+  it('cuts the release after the second full pass of the lyrics',()=>{
+    const long=[[0,10],[1,20],[0,30],[1,40],[0,50]].map(([lineIndex,end])=>({lineIndex:lineIndex!,end:end!}));
+    expect(releaseCutPoint(long,2,90)).toBe(43); // two passes end at 40 s
+    const short=[[0,4],[1,8],[0,14],[1,18],[0,24],[1,28],[0,34]].map(([lineIndex,end])=>({lineIndex:lineIndex!,end:end!}));
+    expect(releaseCutPoint(short,2,60)).toBe(27); // two passes end at 18 s: keep going to the first pass end past 22 s
+    expect(releaseCutPoint(long.slice(0,1),2,90)).toBe(25); // never got a full pass: keep the minimum
   });
   it('flags lyrics the model invented',()=>{
     expect(chatLineShare(lines.slice(0,1),[{text:'Line one!'},{text:'(oh-oh)'},{text:'line one'}])).toBe(1);

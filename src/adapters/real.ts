@@ -158,7 +158,16 @@ export class PascalProvider implements MusicProvider {
       if (synced && synced.linesFound === lines.length && synced.matchedWords >= 0.6 * synced.expectedWords) {
         console.info(`[Lyric sync] job_id=${finished.id} segments=${synced.segments.length} words=${synced.matchedWords}/${synced.expectedWords}`);
         const firstTimes = lines.map((line, index) => { const first = synced.segments.find((segment) => segment.lineIndex === index)!; return { text: line.text, start: first.start, end: first.end }; });
-        return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: firstTimes, sungSegments: synced.segments.map(({ text, start, end, words: timed }) => ({ text, start, end, words: timed })), words: synced.segments.flatMap((segment) => segment.words), fidelityScore, isMock: false };
+        // the release model picks its own length and our strict prompt makes it repeat chat's lines to fill it;
+        // keep two full passes of the lyrics, then a short instrumental tail and fade
+        const cut = releaseCutPoint(synced.segments, lines.length, durationSec);
+        let finalName = fileName, finalDuration = durationSec;
+        if (cut < durationSec - 1) {
+          try { finalName = await trimAudio(resolve(mediaDir, fileName), cut, ext); finalDuration = cut; console.info(`[Release trim] job_id=${finished.id} ${durationSec.toFixed(1)}s -> ${cut.toFixed(1)}s`); }
+          catch (error) { console.error('[Release trim] failed; keeping the full song:', error instanceof Error ? error.message : error); }
+        }
+        const kept = synced.segments.filter((segment) => segment.start < finalDuration).map(({ text, start, end, words: timed }) => ({ text, start, end: Math.min(end, finalDuration), words: timed.filter((word) => word.start < finalDuration) }));
+        return { audioUrl: `/media/${finalName}`, durationSec: finalDuration, lineTimings: firstTimes, sungSegments: kept, words: kept.flatMap((segment) => segment.words), fidelityScore, isMock: false };
       }
       console.warn(`[Lyric sync] job_id=${finished.id} could not align (${synced ? `${synced.linesFound}/${lines.length} lines, ${synced.matchedWords}/${synced.expectedWords} words` : 'no transcript'}); using model line times`);
       return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words: refineTimings(words, heard), fidelityScore, isMock: false };
@@ -249,6 +258,27 @@ function ttsParams(schema: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
+// end of the second full pass of the lyrics (every line sung twice), plus a 3 s tail; never shorter than one pass + tail
+export function releaseCutPoint(segments: Array<{ lineIndex: number; end: number }>, lineCount: number, duration: number): number {
+  // and at least ~25 s long, so a 2-line song is still a song
+  const minEnd = 22;
+  const counts = new Array<number>(lineCount).fill(0);
+  let firstPassEnd = 0;
+  for (const segment of [...segments].sort((a, b) => a.end - b.end)) {
+    counts[segment.lineIndex] = (counts[segment.lineIndex] ?? 0) + 1;
+    if (!firstPassEnd && counts.every((count) => count >= 1)) firstPassEnd = segment.end;
+    if (counts.every((count) => count >= 2) && segment.end >= minEnd) return Math.min(duration, segment.end + 3);
+  }
+  return Math.min(duration, Math.max(firstPassEnd, minEnd) + 3);
+}
+async function trimAudio(path: string, seconds: number, ext: string): Promise<string> {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const output = `${randomUUID()}${ext === '.wav' ? '.wav' : '.mp3'}`;
+  const fade = Math.min(2.5, seconds / 4);
+  await promisify(execFile)(process.env.FFMPEG_PATH ?? 'ffmpeg', ['-y', '-v', 'error', '-i', path, '-t', seconds.toFixed(2), '-af', `afade=t=out:st=${(seconds - fade).toFixed(2)}:d=${fade.toFixed(2)}`, ...(ext === '.wav' ? [] : ['-b:a', '192k']), resolve('data/media', output)]);
+  return output;
+}
 // plain lines, no [Verse]/[Chorus] tags: section tags invite Lyria to write the rest of the section itself
 export function formatLyrics(lines: CandidateLine[], _strict = false): string {
   return lines.map((line) => line.text.trim()).join('\n');
