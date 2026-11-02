@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import type { CandidateLine, MusicClip, SceneSpec } from './adapters/types.js';
 import { fallbackScene } from './scenes.js';
 
-export type VideoScene = { lineKey: string; scene: SceneSpec; line: CandidateLine; start: number; end: number; words: MusicClip['words'] };
+export type VideoScene = { lineKey: string; scene: SceneSpec; line: CandidateLine; channelName?: string; start: number; end: number; words: MusicClip['words'] };
 export type VideoFrame = { entry: VideoScene; sceneStart: number; cameraStart: number; interlude: boolean };
 export const VIDEO_INTRO_SECONDS = 2;
 export const VIDEO_CREDITS_SECONDS = 3;
@@ -21,7 +21,7 @@ export function selectVideoFrame(time: number, scenes: VideoScene[]): VideoFrame
 }
 
 export function exportPageHtml(): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>@font-face{font-family:Chewy;src:url('/fonts/Chewy-Regular.ttf') format('truetype');font-weight:400;font-display:block}html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#f3ecdf}svg{width:1280px;height:720px;display:block}</style></head><body><div id="stage"></div><script type="module">import{renderSceneSvg}from'/scene-renderer.js';window.fontsReady=(async()=>{const loaded=await document.fonts.load('54px Chewy');await document.fonts.ready;if(!loaded.length||!document.fonts.check('54px Chewy'))throw new Error('Bundled Chewy font failed to load');return true})();window.draw=async(data)=>{document.getElementById('stage').innerHTML=renderSceneSvg(data.scene,{line:data.line,words:data.words,time:data.time,sceneStart:data.sceneStart,cameraStart:data.cameraStart,quality:'export',interlude:data.interlude});await new Promise(requestAnimationFrame);return true};</script></body></html>`;
+  return '<!doctype html><html><head><meta charset="utf-8"><style>@font-face{font-family:Chewy;src:url(\'/fonts/Chewy-Regular.ttf\') format(\'truetype\');font-weight:400;font-display:block}html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#2f2a3a}svg{width:1280px;height:720px;display:block}</style></head><body><div id="stage"></div><script type="module" src="/export-page.js"></script></body></html>';
 }
 
 export function queueMusicVideoExport(songId: string, title: string, audioPath: string, duration: number, scenes: VideoScene[], onStart?: () => void, onFailure?: (error: unknown) => void, runExport = exportMusicVideo): Promise<string> {
@@ -35,10 +35,11 @@ export async function exportMusicVideo(songId: string, title: string, audioPath:
   let chrome: ReturnType<typeof spawn> | null = null; let ffmpeg: ReturnType<typeof spawn> | null = null; let server: import('node:http').Server | null = null; let client: any = null;
   const kill = (child: ReturnType<typeof spawn> | null) => { if (child && child.exitCode === null) child.kill('SIGKILL'); };
   const work = async (): Promise<string> => {
-  const fps = 24; const frameCount = Math.ceil(duration * fps);
+  const fps = 24; const frameCount = Math.ceil((duration + 5) * fps);
   const httpServer = await import('node:http').then(({ createServer }) => createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/frame') { res.setHeader('content-type','text/html'); res.end(exportPageHtml()); return; }
+    if (url.pathname === '/export-page.js') { res.setHeader('content-type','text/javascript'); res.end(await import('node:fs/promises').then(fs => fs.readFile(resolve('public/export-page.js')))); return; }
     if (url.pathname === '/scene-renderer.js') { res.setHeader('content-type','text/javascript'); res.end(await import('node:fs/promises').then(fs => fs.readFile(resolve('public/scene-renderer.js')))); return; }
     if (url.pathname === '/fonts/Chewy-Regular.ttf') { res.setHeader('content-type','font/ttf'); res.end(await import('node:fs/promises').then(fs => fs.readFile(resolve('public/fonts/Chewy-Regular.ttf')))); return; }
     res.writeHead(404).end();
@@ -61,11 +62,13 @@ export async function exportMusicVideo(songId: string, title: string, audioPath:
   const pageReady=new Promise<void>(resolvePromise=>Page.loadEventFired(resolvePromise));
   await Page.navigate({url:`http://127.0.0.1:${address.port}/frame`});
   await pageReady;
-  await Runtime.evaluate({expression:'window.fontsReady',awaitPromise:true});
+  const fontCheck=await Runtime.evaluate({expression:'window.fontsReady',awaitPromise:true});
+  if(fontCheck.exceptionDetails)throw new Error('Font check failed before video capture: '+(fontCheck.exceptionDetails.exception?.description??fontCheck.exceptionDetails.text??'Chewy failed to load'));
+  if(fontCheck.result?.value!==true)throw new Error('Font check failed before video capture: bundled Chewy font is not ready');
   const output=resolve(media,`${songId}.mp4`);
-  ffmpeg=spawnProcess(ffmpegPath,['-y','-f','image2pipe','-framerate',String(fps),'-vcodec','mjpeg','-i','pipe:0','-i',audioPath,'-t',String(duration),'-vf','scale=1280:720','-c:v','libx264','-pix_fmt','yuv420p','-r',String(fps),'-c:a','aac','-shortest',output],{stdio:['pipe','ignore','pipe']});
+  ffmpeg=spawnProcess(ffmpegPath,['-y','-f','image2pipe','-framerate',String(fps),'-vcodec','mjpeg','-i','pipe:0','-itsoffset','2','-i',audioPath,'-af','apad=pad_dur=3','-t',String(duration+5),'-vf','scale=1280:720','-c:v','libx264','-pix_fmt','yuv420p','-r',String(fps),'-c:a','aac',output],{stdio:['pipe','ignore','pipe']});
   const ffmpegDone=waitChild(ffmpeg); ffmpegDone.catch(()=>undefined);
-    const frameData=(frame:number)=>{const time=frame/fps;const selected=selectVideoFrame(time,scenes);const entry=selected?.entry;return{scene:entry?.scene??emptyScene(title),line:selected?.interlude?'':entry?.line.text??title,words:selected?.interlude?[]:entry?.words??[],time,sceneStart:selected?.sceneStart??0,cameraStart:selected?.cameraStart??0,interlude:selected?.interlude??false};};
+    const frameData=(frame:number)=>{const outputTime=frame/fps;if(outputTime<2)return{card:'intro',title,channelName:scenes[0]?.channelName??'Twitch'};if(outputTime>=duration+2)return{card:'credits',title,credits:[...new Set(scenes.map(scene=>'@'+scene.line.login))].join(', ')};const time=outputTime-2;const selected=selectVideoFrame(time,scenes);const entry=selected?.entry;return{scene:entry?.scene??emptyScene(title),line:selected?.interlude?'':entry?.line.text??title,words:selected?.interlude?[]:entry?.words??[],time,sceneStart:selected?.sceneStart??0,cameraStart:selected?.cameraStart??0,interlude:selected?.interlude??false};};
     const drawFrame=(frame:number)=>Runtime.evaluate({expression:`window.draw(${JSON.stringify(frameData(frame))})`,awaitPromise:true});
     const queuedFrames:Array<{data:string;sessionId:number}> = [];let nextFrameResolve:((frame:{data:string;sessionId:number})=>void)|null=null;
     Page.screencastFrame((frame:{data:string;sessionId:number})=>{if(nextFrameResolve){const resolveFrame=nextFrameResolve;nextFrameResolve=null;resolveFrame(frame);}else queuedFrames.push(frame);});

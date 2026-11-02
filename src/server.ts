@@ -77,7 +77,7 @@ const engine = new RoundEngine({
         scene = await new LlmSceneArtist().create(line, song.lines, song.mood);
         db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line.text, JSON.stringify(scene), Date.now());
       }
-      return { lineKey: sceneKeyForLine(line), scene, line, start: timing.start, end: timing.end, words: song.clip.words.filter((word) => word.start >= timing.start && word.start < timing.end) };
+      return { lineKey: sceneKeyForLine(line), scene, line, channelName: config.twitchChannelLogin || 'Twitch channel', start: timing.start, end: timing.end, words: song.clip.words.filter((word) => word.start >= timing.start && word.start < timing.end) };
     }));
     void queueMusicVideoExport(song.id, song.title, audioPath, song.clip.durationSec, videoScenes, () => {
       db.prepare("UPDATE songs SET video_status='rendering',video_error=NULL WHERE id=?").run(song.id);
