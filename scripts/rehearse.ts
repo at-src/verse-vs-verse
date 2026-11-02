@@ -50,11 +50,11 @@ async function main(): Promise<void> {
 
   for (const [index, round] of plan.rounds.entries()) {
     await waitFor((s) => s.phase === 'WRITE' && s.round === index + 1);
-    console.log(`round ${index + 1}: write`); await sleep(3000);
-    for (const [login, text] of Object.entries(round.lines)) { await say(who(login), broadcaster, `!line ${text}`); await sleep(2500); }
+    console.log(`round ${index + 1}: write`); await sleep(1500);
+    for (const [login, text] of Object.entries(round.lines)) { await say(who(login), broadcaster, `!line ${text}`); await sleep(1800); }
     const vote = await waitFor((s) => s.phase === 'VOTE');
     const target = vote.shortlist.findIndex((line: any) => line.login.toLowerCase() === round.vote.toLowerCase());
-    console.log(`round ${index + 1}: vote for @${round.vote}'s line (!${target + 1})`); await sleep(3000);
+    console.log(`round ${index + 1}: vote for @${round.vote}'s line (!${target + 1})`); await sleep(1500);
     for (const login of Object.keys(round.lines)) { await say(who(login), broadcaster, `!${Math.max(0, target) + 1}`); await sleep(1500); }
     await waitFor((s) => ['PLAY', 'RELEASE'].includes(s.phase) || (s.phase === 'WRITE' && s.round === index + 2));
   }

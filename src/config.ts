@@ -23,6 +23,10 @@ export const config = {
   voteSeconds: positiveInt(process.env.VOTE_SECONDS, 30),
   roundsPerSong: positiveInt(process.env.ROUNDS_PER_SONG, 4),
   releaseSeconds: positiveInt(process.env.RELEASE_SECONDS, 20),
+  // clip: the last round's clip is the finished song (no extra wait). full: render a longer pro version at the end
+  releaseMode: (process.env.RELEASE_MODE === 'full' ? 'full' : 'clip') as 'clip' | 'full',
+  // the music video renders in the background after release; off by default to save time and credits
+  musicVideo: process.env.MUSIC_VIDEO === 'on',
   maxSongsPerHour: positiveInt(process.env.MAX_SONGS_PER_HOUR, 3),
   twitchClientId: process.env.TWITCH_CLIENT_ID ?? '',
   twitchClientSecret: process.env.TWITCH_CLIENT_SECRET ?? '',

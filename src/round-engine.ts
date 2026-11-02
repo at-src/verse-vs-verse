@@ -25,6 +25,7 @@ type EngineOptions = {
   music: MusicProvider; artist: SceneArtist; voice: Voice;
   now?: () => number; broadcast?: (event: RoundEvent) => void;
   onLoopLimit?: () => void;
+  releaseMode?: 'clip' | 'full';
   onReleaseFailure?: (song:{id:string;channelId:string;title:string;style:string;createdAt:number;lines:CandidateLine[];error:string})=>void;
   saveSong?: (song: { id: string; channelId: string; title: string; style: string; createdAt: number; clip: MusicClip; lines: CandidateLine[]; scenes: SceneIndex }) => void;
   saveScene?: (line: string, scene: SceneSpec) => void;
@@ -201,11 +202,13 @@ export class RoundEngine {
 
   private async produceRelease(retry:boolean):Promise<void>{
     // clear the last round's clip before announcing RELEASE, so no one mistakes it for the release song
+    // the last round's clip already sings every chat line with exact line times; by default that IS the release (no extra wait)
+    const lastRoundClip=this.state.clip&&!this.state.clip.isMock&&this.state.clip.lineTimings?.length?this.state.clip:null;
     if(!retry){this.state.clip=null;this.state.clipError=null;this.releaseSongId=randomUUID();this.setPhase('RELEASE');}
     this.state.releaseFailed=false;this.state.musicRetrying=false;
     if(this.releaseTimer)clearTimeout(this.releaseTimer);
     try{
-      const clip=await this.renderMusic(true,false);
+      const clip=!retry&&this.options.releaseMode!=='full'&&lastRoundClip?lastRoundClip:await this.renderMusic(true,false);
       if(clip.isMock)throw new Error('Release audio is a mock; configure Pascal and retry before saving this song.');
       if(this.options.judge.title){try{this.state.title=await this.options.judge.title(this.state.song,this.state.style,this.state.mood);}catch(error){console.warn('[Title] falling back to default:',error);}}
       this.state.clip=clip;this.state.clipStartedAt=this.now();

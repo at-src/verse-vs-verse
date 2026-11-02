@@ -60,7 +60,7 @@ const saveSong = db.prepare(`INSERT INTO songs (id, channel_id, title, style, cr
 
 const engine = new RoundEngine({
   writeSeconds: config.writeSeconds, voteSeconds: config.voteSeconds,
-  roundsPerSong: config.roundsPerSong, maxSongsPerHour: config.maxSongsPerHour, releaseSeconds: config.releaseSeconds,
+  roundsPerSong: config.roundsPerSong, maxSongsPerHour: config.maxSongsPerHour, releaseSeconds: config.releaseSeconds, releaseMode: config.releaseMode,
   channelId: 'local', channelLogin: config.twitchChannelLogin || 'local',
   judge: new OpenCompatibleJudge(), moderation: new RealModeration(), music: new PascalProvider(),
   artist: new LlmSceneArtist(), voice: new PascalProvider(), broadcast,
@@ -77,6 +77,7 @@ const engine = new RoundEngine({
   },
   saveScene: (line, scene) => db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line, JSON.stringify(scene), Date.now()),
   onRelease: async (song) => {
+    if (!config.musicVideo) { db.prepare("UPDATE songs SET video_status='off' WHERE id=?").run(song.id); return; }
     const audioPath = !song.clip.isMock && song.clip.audioUrl.startsWith('/media/') && !song.clip.audioUrl.includes('mock-tone') ? resolve('data/media', song.clip.audioUrl.slice('/media/'.length).split('?')[0]) : null;
     if (!audioPath) {
       db.prepare("UPDATE songs SET video_status='failed',video_error='No saved audio file is available for video export' WHERE id=?").run(song.id);
