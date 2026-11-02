@@ -73,6 +73,8 @@ export function syncLyrics(lines: string[], heardWords: TimedWord[], duration: n
       if (cur.start - prev.end > 1.2) { const length = Math.min(0.6, Math.max(0.2, cur.end - cur.start)); cur.start = prev.end + 0.1; cur.end = cur.start + length; }
     }
     const timed = words.map((word, i) => { const t = times[i]!; const start = Math.max(0, Math.min(duration, t.start)); return { word, start, end: Math.min(duration, Math.max(start + 0.15, t.end)) }; });
+    // a real sung line takes time; a "match" squeezed into < 0.2 s per word is the model's garbage at the song's tail
+    if (timed.at(-1)!.start - timed[0]!.start < 0.2 * (words.length - 1)) { at = pairs.at(-1)![1] + 1; continue; }
     segments.push({ text: lines[index]!, lineIndex: index, start: timed[0]!.start, end: timed.at(-1)!.end, words: timed });
     matchedWords += pairs.length; expectedWords += words.length;
     at = pairs.at(-1)![1] + 1;

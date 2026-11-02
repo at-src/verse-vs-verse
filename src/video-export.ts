@@ -94,18 +94,25 @@ export async function exportMusicVideo(songId: string, title: string, audioPath:
     const queuedFrames:Array<{data:string;sessionId:number}> = [];let nextFrameResolve:((frame:{data:string;sessionId:number})=>void)|null=null;
     Page.screencastFrame((frame:{data:string;sessionId:number})=>{if(nextFrameResolve){const resolveFrame=nextFrameResolve;nextFrameResolve=null;resolveFrame(frame);}else queuedFrames.push(frame);});
     await Page.startScreencast({format:'jpeg',quality:78,maxWidth:1280,maxHeight:720,everyNthFrame:1});
-    const nextFrame=()=>new Promise<{data:string;sessionId:number}>(resolvePromise=>{const frame=queuedFrames.shift();if(frame)resolvePromise(frame);else nextFrameResolve=resolvePromise;});
+    // Chrome's screencast only emits a frame when pixels change; if a draw changes nothing visible it never fires,
+    // so after 400 ms take a direct screenshot instead (sessionId -1 = nothing to ack)
+    const nextFrame=()=>new Promise<{data:string;sessionId:number}>(resolvePromise=>{const frame=queuedFrames.shift();if(frame){resolvePromise(frame);return;}
+      let settled=false;const finish=(value:{data:string;sessionId:number})=>{if(settled)return;settled=true;clearTimeout(fallback);if(nextFrameResolve===finish)nextFrameResolve=null;resolvePromise(value);};
+      const fallback=setTimeout(()=>{void Page.captureScreenshot({format:'jpeg',quality:78}).then((shot:{data:string})=>finish({data:shot.data,sessionId:-1})).catch(()=>undefined);},400);
+      nextFrameResolve=finish;});
+    const ack=(sessionId:number)=>sessionId>=0?Page.screencastFrameAck({sessionId}):Promise.resolve();
     const initialFrame=await nextFrame();
     await drawFrame(0);
-    await Page.screencastFrameAck({sessionId:initialFrame.sessionId});
+    await ack(initialFrame.sessionId);
     let captured=await nextFrame();
     for(let frame=0;frame<frameCount;frame+=1){
       const jpeg=Buffer.from(captured.data,'base64');
-      if(ffmpeg.exitCode!==null){await Page.screencastFrameAck({sessionId:captured.sessionId});break;}
+      if(ffmpeg.exitCode!==null){await ack(captured.sessionId);break;}
       if(!ffmpeg.stdin!.write(jpeg))await new Promise<void>(resolvePromise=>{const done=()=>{ffmpeg!.stdin!.off('drain',done);ffmpeg!.off('exit',done);resolvePromise();};ffmpeg!.stdin!.once('drain',done);ffmpeg!.once('exit',done);});
       if(frame+1<frameCount)await drawFrame(frame+1);
-      await Page.screencastFrameAck({sessionId:captured.sessionId});
+      await ack(captured.sessionId);
       if(frame+1<frameCount)captured=await nextFrame();
+      if(frame>0&&frame%(fps*10)===0)console.info(`[Music video export] ${songId} frame ${frame}/${frameCount}`);
     }
     await Page.stopScreencast();
     if (ffmpeg.exitCode === null) ffmpeg.stdin!.end(); await ffmpegDone;

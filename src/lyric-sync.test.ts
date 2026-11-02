@@ -19,6 +19,10 @@ describe('lyric sync', () => {
     expect(segment!.words).toHaveLength(7);
     expect(segment!.words[5]!.start).toBeGreaterThan(segment!.words[4]!.start);
   });
+  it('drops a match squeezed into an impossibly short time', () => {
+    const words = [...heard('we were dancing in the rain', 2), ...heard('chai at midnight with the city lights', 9, 0.03)];
+    expect(syncLyrics(lines, words, 30).segments.map((s) => s.lineIndex)).toEqual([1]);
+  });
   it('pulls back a last word the model stamped seconds late', () => {
     const words = [...heard('we were dancing in the', 10), { word: 'rain', start: 14.5, end: 14.8 }];
     const [segment] = syncLyrics(lines, words, 30).segments;
