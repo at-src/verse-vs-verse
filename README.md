@@ -95,7 +95,7 @@ Set these in `.env`:
 
 ### Models
 
-The defaults below are the models the project was built and tested with.
+The defaults below are the recommended models for each role.
 
 | Variable | Default | Role |
 |---|---|---|
@@ -103,8 +103,8 @@ The defaults below are the models the project was built and tested with.
 | `PASCAL_RELEASE_MODEL` | `lyria-3-pro-preview` | Full-length final song, used only when `RELEASE_MODE=full` |
 | `PASCAL_ASR_MODEL` | `qwen3-asr-1.7b` | Speech-to-text that times each sung word for the karaoke lyrics and lip sync |
 | `PASCAL_TTS_MODEL` | empty (off) | Optional spoken announcement when a song is released. Set to any Pascal text-to-speech model ID |
-| `LLM_MODEL` | `gpt-4.1-mini` | Shortlists the strongest lines and writes song titles |
-| `SCENE_MODEL` | `gpt-4.1` | Scene planning: turns each line into a scene (props, character pose, motion and camera) that the SVG renderer animates |
+| `LLM_MODEL` | `gpt-6-luna` | Shortlists the strongest lines and writes song titles |
+| `SCENE_MODEL` | `gpt-6.1-sol` | Scene planning: turns each line into a scene (props, character pose, motion and camera) that the SVG renderer animates |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint can be used for the two models above |
 | `MODERATION_PROVIDER` | `openai` | OpenAI moderation endpoint. `none` keeps only the local filters |
 
