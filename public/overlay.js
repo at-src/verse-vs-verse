@@ -8,13 +8,26 @@ ws.onmessage=({data})=>{
   const event=JSON.parse(data);
   if(event.type==='STATE'){state=event.state;if(state.phase==='PRODUCE'||(state.phase==='RELEASE'&&!state.clip)){player.pause();activeClip=null;audioStartedFor=null;}render();driveAnimation();}
   if(event.type==='SCENE'){if(state){state.scenes??={};state.scenes[lineKey(event.line)]=event.scene;}render();}
+  if(event.type==='VOTE_TALLY'&&state){state.votes=event.counts;render();}
   if(event.type==='CLIP')play(event.clip);
   if(event.type==='VOICE'){const voice=new Audio(event.audioUrl);voice.play().catch(()=>undefined);}
 };
 fetch('/api/state').then((res)=>res.json()).then((value)=>{state=value;render();driveAnimation();});
+// countdowns and the "making the song" timer tick on their own, not only when an event arrives
+setInterval(()=>{if(state&&(state.deadline||state.phase==='PRODUCE'||state.phase==='RELEASE'))renderPanel();},500);
 
 function render(){
   if(!state)return;
+  renderPanel();
+  const preview=$('preview-scene');const lastLine=state.song?.at(-1);const previewScene=lastLine&&getScene(lastLine);
+  preview.style.display=['WRITE','VOTE'].includes(state.phase)&&previewScene?'block':'none';
+  if(previewScene)renderScene(preview,previewScene,{line:lastLine.text,time:10,bpm:activeClip?.bpm??100});
+  $('scene').style.display=['PLAY','RELEASE'].includes(state.phase)?'block':'none';
+}
+
+function renderPanel(){
+  // while the song plays, shrink the panel to a small tag so it doesn't cover the scene and lyrics
+  document.querySelector('.overlay-panel').classList.toggle('compact',state.phase==='PLAY'||(state.phase==='RELEASE'&&Boolean(state.clip)));
   $('phase').textContent=`VERSE vs VERSE · ${state.phase}`;
   $('countdown').textContent=state.deadline?`${Math.max(0,Math.ceil((state.deadline-Date.now())/1000))} seconds`:'';
   const producing=state.phase==='PRODUCE'||(state.phase==='RELEASE'&&!state.clip&&!state.releaseFailed);
@@ -24,13 +37,13 @@ function render(){
   else if(state.phase==='VOTE')$('content').innerHTML=state.shortlist.map((line,i)=>`<div>!${i+1} · ${escapeHtml(line.text)} <small>(${state.votes[i]||0})</small></div>`).join('');
   else if(state.phase==='RELEASE'&&state.releaseFailed)$('content').textContent='Release failed. Retry is available in the dashboard.';
   else if(state.phase==='RELEASE')$('content').innerHTML=`<div>${state.song.map((line)=>escapeHtml(line.text)).join(' · ')}</div>`;
-  else if(producing){$('content').innerHTML=`<div>${[...new Set(state.song.map(line=>'@'+line.login))].join(', ')||'chat'} · ${Math.floor((Date.now()-state.phaseStartedAt)/1000)}s</div>`;}
+  else if(producing){
+    const seconds=Math.floor((Date.now()-state.phaseStartedAt)/1000);
+    const winner=state.phase==='PRODUCE'?(state.song.at(-1)??state.shortlist[state.votes.indexOf(Math.max(...state.votes))]):null;
+    $('content').innerHTML=winner?`<div>Winning line by @${escapeHtml(winner.login)}:<br>“${escapeHtml(winner.text)}”</div><div class="mono">the AI band is recording it · ${seconds}s</div>`:`<div>${[...new Set(state.song.map(line=>'@'+line.login))].join(', ')} · ${seconds}s</div>`;
+  }
   else if(state.phase==='PLAY'&&!state.clip&&state.clipError)$('content').textContent='This round’s clip could not be rendered. The winning line stays in the song.';
   else $('content').textContent='';
-  const preview=$('preview-scene');const lastLine=state.song?.at(-1);const previewScene=lastLine&&getScene(lastLine);
-  preview.style.display=['WRITE','VOTE'].includes(state.phase)&&previewScene?'block':'none';
-  if(previewScene)renderScene(preview,previewScene,{line:lastLine.text,time:10,bpm:activeClip?.bpm??100});
-  $('scene').style.display=['PLAY','RELEASE'].includes(state.phase)?'block':'none';
 }
 
 function play(clip){
