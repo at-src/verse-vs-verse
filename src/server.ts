@@ -23,13 +23,19 @@ function normalizeLine(text: string): string { return text.toLowerCase().replace
 let lastPhase = 'IDLE';
 let twitchRef: TwitchService | null = null;
 // one chat message per phase change, instead of a reply to every line and vote
+// on a tie the line the AI judge ranked higher (the lower number) wins; say so instead of looking random
+function tieNote(votes: number[]): string {
+  const top = Math.max(0, ...votes);
+  return top > 0 && votes.filter((count) => count === top).length > 1 ? 'Tie! It goes to the AI judge\'s pick. ' : top === 0 ? 'No votes, so the AI judge picked. ' : '';
+}
 function announce(state: RoundState): void {
   if (state.phase === lastPhase) return;
   lastPhase = state.phase;
   const winner = state.song.at(-1);
   const text = state.phase === 'WRITE' ? `Round ${state.round}/${state.roundsPerSong}: write the next line! Type !line <your lyric> (${state.writeSeconds}s)`
-    : state.phase === 'VOTE' ? `Vote for the next line: !1 to !${state.shortlist.length} (${state.voteSeconds}s)`
-    : state.phase === 'PLAY' && winner && state.clip ? `Line ${state.song.length} by @${winner.login} won. Listen!`
+    // list the options in chat too: viewers reading chat (or on mobile) can't see the overlay's numbering
+    : state.phase === 'VOTE' ? `Vote for the next line (${state.voteSeconds}s): ${state.shortlist.map((line, index) => `!${index + 1} "${line.text}"`).join(' | ')}`
+    : state.phase === 'PLAY' && winner && state.clip ? `${tieNote(state.votes)}Line ${state.song.length} by @${winner.login} won (${Math.max(0, ...state.votes)} vote${Math.max(0, ...state.votes) === 1 ? '' : 's'}). Listen!`
     : '';
   if (text && twitchRef?.connected()) void twitchRef.sendChat(text);
 }
