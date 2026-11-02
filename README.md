@@ -64,7 +64,7 @@ The commit history follows these stages.
 | Art style and props | `skills/clay-scenes/` |
 | Broadcast and rehearsal tools | `scripts/` |
 
-## Setup
+## Quick start
 
 Requirements: Node.js 22, ffmpeg, and Google Chrome (for video export and broadcasting).
 
@@ -101,11 +101,57 @@ Create a Twitch application at https://dev.twitch.tv/console with the redirect U
 | `MUSIC_VIDEO` | `off` | `on` renders an MP4 music video after each song |
 | `PASCAL_MUSIC_MODEL` | `lyria-3-clip-preview` | Music model used for each round |
 
-## Going live
+## Running on a live Twitch channel
 
-- **With OBS:** add a Browser Source pointing to `http://localhost:3000/overlay` at 1920x1080. The overlay is transparent.
-- **Without OBS:** `npm run broadcast` streams the overlay to the connected channel and saves a local recording.
-- **Rehearsal:** `npm run rehearse -- demo-scripts/demo-song.json` runs a planned song through Twitch chat, which is useful for testing a setup before going live.
+Verse vs Verse runs next to the streamer's broadcasting software, the same way most stream overlays and chat bots do. Chat events arrive through Twitch EventSub over WebSocket, so no public webhook URL is needed.
+
+### 1. Register a Twitch application
+
+1. Open the [Twitch Developer Console](https://dev.twitch.tv/console/apps) and choose **Register Your Application**.
+2. Set the OAuth Redirect URL to the address the app runs on, for example `http://localhost:3000/auth/callback`.
+3. Choose the **Confidential** client type, then copy the Client ID and generate a Client Secret.
+
+### 2. Configure the channel
+
+Set these values in `.env`:
+
+```
+TWITCH_CLIENT_ID=your-client-id
+TWITCH_CLIENT_SECRET=your-client-secret
+TWITCH_REDIRECT_URI=http://localhost:3000/auth/callback
+TWITCH_CHANNEL_LOGIN=your_channel
+MAX_SONGS_PER_HOUR=3
+```
+
+Add the API keys from the table above, then set `MUSIC_VIDEO=on` if each song should produce a music video.
+
+### 3. Start the app and connect the channel
+
+```powershell
+npm start
+```
+
+Open `/auth/login` and sign in as the broadcaster. The app requests these scopes: `user:read:chat` and `user:write:chat` (to read and reply in chat), `channel:read:redemptions`, `moderator:read:followers`, and `channel:read:stream_key` (to go live without OBS). Tokens are stored in the local SQLite database and refreshed automatically.
+
+### 4. Add the overlay to the stream
+
+- **With OBS or Streamlabs:** add a Browser Source at 1920x1080 pointing to `http://localhost:3000/overlay`. The overlay is transparent and sits on top of the existing scene. Use `/overlay?stream=1` for the complete stream layout with the room backdrop and on-camera streamer.
+- **Without OBS:** `npm run broadcast` reads the stream key through the Twitch API, streams the overlay straight to the channel, and saves a local recording.
+
+### 5. Run a song
+
+Go live, open `/dashboard`, and start a song. Viewers join with `!line <lyric>` during the write phase and `!1`, `!2` during the vote. The bot posts the instructions in chat each round, and `!help` repeats them.
+
+To test a setup before going live, `npm run rehearse -- demo-scripts/demo-song.json` plays a planned song through Twitch chat.
+
+### Hosting on a server
+
+To run the app on a server instead of the streamer's PC:
+
+1. Serve it over HTTPS behind a reverse proxy such as Caddy or nginx.
+2. Set `TWITCH_REDIRECT_URI` to `https://your-domain/auth/callback`, and add the same URL in the Twitch Developer Console.
+3. Protect `/dashboard` and `/auth` at the proxy, for example with basic authentication, because the dashboard controls the stream.
+4. Point the OBS Browser Source to `https://your-domain/overlay`.
 
 ## Tests
 
