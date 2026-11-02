@@ -1,6 +1,6 @@
 # Verse vs Verse
 
-Verse vs Verse turns a Twitch chat into a live songwriting room. Viewers submit lyric lines, the lines compete for the chat's vote, and an AI band sings each winning line on stream within seconds. Each line is shown as an animated scene. When the song is finished, the channel gets a music video that credits every writer.
+Verse vs Verse turns a Twitch chat into a live songwriting room. Viewers submit lyric lines, the lines compete for the chat's vote, and an AI band sings each winning line on stream. Each line is shown as an animated scene. When the song is finished, the channel gets a music video that credits every writer.
 
 Built for the Codex x TwitchCon Hackathon with OpenAI Codex.
 
@@ -77,7 +77,7 @@ npm run dev
 
 Open http://localhost:3000/dashboard.
 
-Without API keys, every adapter runs a local mock, so the full flow can be tried offline with **Simulate chat** on the dashboard.
+Each adapter falls back to a local mock when its key is not set, so the full flow can be tried offline with **Simulate chat** on the dashboard. Adding keys switches the matching adapter to the real model.
 
 ### Keys
 
@@ -85,11 +85,30 @@ Set these in `.env`:
 
 | Variable | Purpose |
 |---|---|
-| `LLM_API_KEY` | OpenAI-compatible model for the judge, titles and scenes |
+| `PASCAL_API_KEY` | Music generation, speech-to-text (lyric timing) and voice |
+| `LLM_API_KEY` | OpenAI-compatible model for the line judge, song titles and scene planning |
 | `OPENAI_API_KEY` | Content moderation |
-| `PASCAL_API_KEY` | Music, speech-to-text and voice |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | Twitch application credentials |
 | `TWITCH_CHANNEL_LOGIN` | The channel to run on |
+
+**For judges:** a Pascal API key is included in the Devpost testing instructions. Set it as `PASCAL_API_KEY` to generate real songs. Add an OpenAI key as `LLM_API_KEY` and `OPENAI_API_KEY` for AI judging, scene planning and moderation.
+
+### Models
+
+The defaults below are the models the project was built and tested with.
+
+| Variable | Default | Role |
+|---|---|---|
+| `PASCAL_MUSIC_MODEL` | `lyria-3-clip-preview` | Sings each winning line |
+| `PASCAL_RELEASE_MODEL` | `lyria-3-pro-preview` | Full-length final song, used only when `RELEASE_MODE=full` |
+| `PASCAL_ASR_MODEL` | `qwen3-asr-1.7b` | Speech-to-text that times each sung word for the karaoke lyrics and lip sync |
+| `PASCAL_TTS_MODEL` | empty (off) | Optional spoken announcement when a song is released. Set to any Pascal text-to-speech model ID |
+| `LLM_MODEL` | `gpt-4.1-mini` | Shortlists the strongest lines and writes song titles |
+| `SCENE_MODEL` | `gpt-4.1` | Scene planning: turns each line into a scene (props, character pose, motion and camera) that the SVG renderer animates |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint can be used for the two models above |
+| `MODERATION_PROVIDER` | `openai` | OpenAI moderation endpoint. `none` keeps only the local filters |
+
+The scene model plans every animation, and the art style it draws from lives in `skills/clay-scenes/`. No separate agent setup is needed: with `LLM_API_KEY` set, each winning line is planned and animated automatically.
 
 Create a Twitch application at https://dev.twitch.tv/console with the redirect URL `http://localhost:3000/auth/callback`, then open `/auth/login` and sign in as the broadcaster.
 
@@ -99,8 +118,8 @@ Create a Twitch application at https://dev.twitch.tv/console with the redirect U
 |---|---|---|
 | `WRITE_SECONDS`, `VOTE_SECONDS`, `ROUNDS_PER_SONG` | 45, 30, 4 | Round timing (also editable on the dashboard) |
 | `RELEASE_MODE` | `clip` | `full` renders a longer final version of the song |
-| `MUSIC_VIDEO` | `off` | `on` renders an MP4 music video after each song |
-| `PASCAL_MUSIC_MODEL` | `lyria-3-clip-preview` | Music model used for each round |
+| `MUSIC_VIDEO` | `off` | Optional. `on` renders an MP4 music video after each song |
+| `MAX_SONGS_PER_HOUR` | 3 | Limits how many songs are generated per hour |
 
 ## Running on a live Twitch channel
 
