@@ -29,7 +29,7 @@ function render(){
   else $('content').textContent='';
   const preview=$('preview-scene');const lastLine=state.song?.at(-1);const previewScene=lastLine&&getScene(lastLine);
   preview.style.display=['WRITE','VOTE'].includes(state.phase)&&previewScene?'block':'none';
-  if(previewScene)renderScene(preview,previewScene,{line:lastLine.text,time:10});
+  if(previewScene)renderScene(preview,previewScene,{line:lastLine.text,time:10,bpm:activeClip?.bpm??100});
   $('scene').style.display=['PLAY','RELEASE'].includes(state.phase)?'block':'none';
 }
 
@@ -67,7 +67,7 @@ function driveAnimation(){
     }else if(state.song.length){
       const shotStart=Math.floor(currentTime/8)*8;line=state.song[Math.floor(currentTime/8)%state.song.length];scene=getScene(line);sceneStart=shotStart;cameraStart=shotStart;interlude=true;
     }
-    if(scene)renderScene($('scene'),scene,{line:interlude?'':line?.text??'',words,time:currentTime,sceneStart,cameraStart,interlude});
+    if(scene)renderScene($('scene'),scene,{line:interlude?'':line?.text??'',words,time:currentTime,sceneStart,cameraStart,interlude,bpm:activeClip.bpm??100});
     if(state.phase==='PLAY'){
       const lastEnd=activeClip.lineTimings?.at(-1)?.end??activeClip.words.at(-1)?.end??activeClip.durationSec;
       if(currentTime>=lastEnd+2){player.pause();return;}

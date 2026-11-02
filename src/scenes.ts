@@ -1,9 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import type { CandidateLine, MascotPose, SceneMood, SceneProp, SceneSpec } from './adapters/types.js';
+import type { CandidateLine, MascotPose, SceneMood, SceneProp, ScenePropMotion, SceneSpec } from './adapters/types.js';
 
 const moods: SceneMood[] = ['day', 'dream', 'night', 'warm', 'sea'];
-const poses: MascotPose[] = ['stand', 'sit', 'walk', 'blow', 'lookup', 'puzzled', 'sleep', 'wave', 'hug', 'jump'];
+const poses: MascotPose[] = ['stand', 'sit', 'walk', 'blow', 'lookup', 'puzzled', 'sleep', 'wave', 'hug', 'jump', 'idle', 'sing', 'dance', 'point', 'hold', 'shrug', 'cheer', 'sleepy', 'surprised'];
 const entrances = ['drop', 'grow', 'slide', 'drift', 'draw', 'pop'] as const;
+const propMotions: ScenePropMotion[] = ['tail','flutter','swim','steam','bob','tilt','pulse','float','twinkle','rain','sway','ripple','city','roll','launch','flicker','cheer','strum','tick','flip'];
+const libraryProps = new Set(['cat','dog','bird','fish','chai cup','coffee mug','pizza','cake','game controller','headset','keyboard','phone','guitar','microphone','speaker','music notes','heart','star','moon','sun','cloud','rain cloud','umbrella','puddle','city skyline','house','car','bike','rocket','tree','flower','fire','crown','trophy','ghost','robot','balloon','gift','book','clock']);
+const propDefaults: Record<string,ScenePropMotion> = {cat:'tail',dog:'tail',bird:'flutter',fish:'swim','chai cup':'steam','coffee mug':'steam',pizza:'bob',cake:'bob','game controller':'tilt',headset:'pulse',keyboard:'pulse',phone:'pulse',guitar:'strum',microphone:'bob',speaker:'pulse','music notes':'float',heart:'pulse',star:'twinkle',moon:'float',sun:'pulse',cloud:'float','rain cloud':'rain',umbrella:'sway',puddle:'ripple','city skyline':'city',house:'bob',car:'roll',bike:'roll',rocket:'launch',tree:'sway',flower:'sway',fire:'flicker',crown:'tilt',trophy:'cheer',ghost:'float',robot:'pulse',balloon:'float',gift:'bob',book:'flip',clock:'tick'};
 const STOPWORDS = new Set(['my','we','the','a','is','at','in','on','with','i','you','and','to','of','it','our','this','that','be','are','was','for']);
 const allowedTags = new Set(['g', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline', 'polygon', 'defs', 'linearGradient', 'radialGradient', 'stop']);
 const palette = ['#fffaf0','#f3ecdf','#d9cfc0','#8a5a3c','#c96f4a','#f08a8a','#e3b448','#ffd23f','#7cbf6a','#5ea85a','#4f9a62','#7fd1c7','#3f8f87','#3f6fc0','#2f2a3a','#2a2622','#e8b41f'];
@@ -11,9 +14,17 @@ const attributeAllow = new Set(['d','fill','fill-opacity','stroke','stroke-width
 
 export function sanitizeProps(input: unknown): SceneProp[] {
   if (!Array.isArray(input)) return [];
-  return input.slice(0, 3).flatMap((raw, index) => {
+  return input.slice(0, 3).flatMap<SceneProp>((raw, index) => {
     if (!raw || typeof raw !== 'object') return [];
     const prop = raw as Record<string, unknown>;
+    const name = typeof prop.prop === 'string' ? prop.prop.trim().toLowerCase() : '';
+    if (name && libraryProps.has(name)) {
+      const numeric=(value:unknown,fallback:number)=>typeof value==='number'&&Number.isFinite(value)?value:fallback;
+      const enter = entrances.includes(prop.enter as typeof entrances[number]) ? prop.enter as SceneProp['enter'] : 'pop';
+      const action = propMotions.includes(prop.action as ScenePropMotion) ? prop.action as ScenePropMotion : propDefaults[name]!;
+      return [{id:name,prop:name,x:clamp(numeric(prop.x,505),50,750),y:clamp(numeric(prop.y,265),110,355),scale:clamp(numeric(prop.scale,1.2),.5,2),action,enter}];
+    }
+    if (name && name !== 'custom') return [];
     if (typeof prop.svg !== 'string') return [];
     let svg: string;
     try { svg = sanitizeSvg(prop.svg); } catch { return []; }
@@ -21,7 +32,7 @@ export function sanitizeProps(input: unknown): SceneProp[] {
     if (!/<(?:path|circle|ellipse|rect|line|polyline|polygon)\b/i.test(svg)) return [];
     if ((svg.match(/</g) ?? []).length > 30) return [];
     const enter = entrances.includes(prop.enter as typeof entrances[number]) ? prop.enter as SceneProp['enter'] : 'pop';
-    return [{ id: typeof prop.id === 'string' ? prop.id.slice(0,48) || `prop-${index}` : `prop-${index}`, enter, svg }];
+    return [{ id: typeof prop.id === 'string' ? prop.id.slice(0,48) || `prop-${index}` : `prop-${index}`, prop:'custom', enter, svg }];
   });
 }
 
@@ -64,8 +75,10 @@ export function validateScene(raw: unknown, line: string, requestedMood = 'day')
   const keyword = closestWord(typeof scene.keyword === 'string' ? scene.keyword : '', words);
   const rawMascot = scene.mascot && typeof scene.mascot === 'object' ? scene.mascot : {};
   const numeric = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-  const mascot = { pose: poses.includes(rawMascot.pose) ? rawMascot.pose : 'stand', x: clamp(numeric(rawMascot.x, 580), 55, 745), y: clamp(numeric(rawMascot.y, 360), 150, 450), scale: clamp(numeric(rawMascot.scale, 1), 0.4, 1.5), facing: rawMascot.facing === 'left' ? 'left' : 'right' };
-  return { line, keyword, mood: repairedMood, ground: typeof scene.ground === 'boolean' ? scene.ground : true, mascot: mascot as SceneSpec['mascot'], props: sanitizeProps(Array.isArray(scene.props) ? scene.props.slice(0, 3) : []) };
+  const requestedAction = scene.action ?? rawMascot.pose;
+  const action: MascotPose = poses.includes(requestedAction) ? requestedAction : 'stand';
+  const mascot = { pose: action, x: clamp(numeric(rawMascot.x, 580), 55, 745), y: clamp(numeric(rawMascot.y, 360), 150, 450), scale: clamp(numeric(rawMascot.scale, 1), 0.4, 1.5), facing: rawMascot.facing === 'left' ? 'left' : 'right' };
+  return { line, keyword, mood: repairedMood, ground: typeof scene.ground === 'boolean' ? scene.ground : true, action, mascot: mascot as SceneSpec['mascot'], props: sanitizeProps(Array.isArray(scene.props) ? scene.props.slice(0, 3) : []) };
 }
 
 export function fallbackScene(line: string, mood: string): SceneSpec {

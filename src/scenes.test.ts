@@ -10,8 +10,13 @@ describe('clay scene validation', () => {
     expect(sanitizeProps([{ id: 'bad', enter: 'pop', svg: '<g><rect onload="alert(1)"/></g>' }])[0]?.svg).not.toContain('onload');
   });
   it('repairs bad pose and mood', () => {
-    expect(validateScene({ ...base, mascot: { ...base.mascot, pose: 'dance' } }, 'in a field of dandelions').mascot.pose).toBe('stand');
+    expect(validateScene({ ...base, action:'dance',mascot: { ...base.mascot, pose: 'dance' } }, 'in a field of dandelions').mascot.pose).toBe('dance');
+    expect(validateScene({ ...base, mascot: { ...base.mascot, pose: 'moonwalk' } }, 'in a field of dandelions').mascot.pose).toBe('stand');
     expect(validateScene({ ...base, mood: 'cyber' }, 'in a field of dandelions', 'dream').mood).toBe('dream');
+  });
+  it('validates named props and repairs their default motion',()=>{
+    expect(sanitizeProps([{prop:'cat',x:504,y:260,scale:1.2,action:'bogus',enter:'pop'}])).toEqual([{id:'cat',prop:'cat',x:504,y:260,scale:1.2,action:'tail',enter:'pop'}]);
+    expect(sanitizeProps([{prop:'alien-cat',x:500,y:260,scale:1,enter:'pop'}])).toEqual([]);
   });
   it('uses the simple fallback scene for unusable model output', () => {
     expect(fallbackScene('my cat', 'day')).toMatchObject({ keyword: 'cat', mood: 'day', props: [] });

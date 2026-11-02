@@ -2,10 +2,11 @@ export type CandidateLine = { id?: string; text: string; userId: string; login: 
 export type TimedWord = { word: string; start: number; end: number };
 export type MusicClip = { audioUrl: string; durationSec: number; words: TimedWord[]; lineTimings?: Array<{ text: string; start: number; end: number }>; sungSegments?: Array<{ text: string; start: number; end: number; words?: TimedWord[] }>; fidelityScore?: number; isMock?: boolean };
 export type SceneMood = 'day' | 'dream' | 'night' | 'warm' | 'sea';
-export type MascotPose = 'stand' | 'sit' | 'walk' | 'blow' | 'lookup' | 'puzzled' | 'sleep' | 'wave' | 'hug' | 'jump';
-export type SceneProp = { id: string; svg: string; enter: 'drop' | 'grow' | 'slide' | 'drift' | 'draw' | 'pop' };
+export type MascotPose = 'stand' | 'sit' | 'walk' | 'blow' | 'lookup' | 'puzzled' | 'sleep' | 'wave' | 'hug' | 'jump' | 'idle' | 'sing' | 'dance' | 'point' | 'hold' | 'shrug' | 'cheer' | 'sleepy' | 'surprised';
+export type ScenePropMotion = 'tail' | 'flutter' | 'swim' | 'steam' | 'bob' | 'tilt' | 'pulse' | 'float' | 'twinkle' | 'rain' | 'sway' | 'ripple' | 'city' | 'roll' | 'launch' | 'flicker' | 'cheer' | 'strum' | 'tick' | 'flip';
+export type SceneProp = { id: string; prop?: string; x?: number; y?: number; scale?: number; action?: ScenePropMotion; svg?: string; enter: 'drop' | 'grow' | 'slide' | 'drift' | 'draw' | 'pop' };
 export type SceneSpec = {
-  line?: string; keyword: string; mood: SceneMood; ground: boolean;
+  line?: string; keyword: string; mood: SceneMood; ground: boolean; action?: MascotPose;
   mascot: { pose: MascotPose; x: number; y: number; scale: number; facing: 'left' | 'right' };
   props: SceneProp[];
 };

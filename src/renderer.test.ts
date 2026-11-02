@@ -16,6 +16,10 @@ describe('clay renderer skill examples',()=>{
     const scene={...fallbackScene('a paper plane flies','day'),props:[{id:'plane',enter:'drop',svg:'<g><circle cx="400" cy="250" r="30" fill="#ffd23f"/></g>'}]};
     expect(renderSceneSvg(scene,{time:0})).not.toBe(renderSceneSvg(scene,{time:1}));
   });
+  it('ships a 40-prop deterministic clay catalog with named anchors and motion',()=>{
+    const require=createRequire(import.meta.url);const {clayPropNames,getClayProp}=require('../public/scene-renderer.js') as {clayPropNames:string[];getClayProp:(name:string)=>{svg:string;anchor:Record<string,number[]>;motion:string}|null};
+    expect(clayPropNames).toHaveLength(40);expect(getClayProp('cat')).toMatchObject({motion:'tail',anchor:{hand:[28,58],center:[50,58]}});expect(getClayProp('cat')?.svg).toContain('<circle');
+  });
   it('uses the bundled display font on the export page and selects interludes for long gaps',async()=>{
     const html=exportPageHtml();expect(html).toContain('/fonts/Chewy-Regular.ttf');
     const page=await readFile('public/export-page.js','utf8');expect(page).toContain("document.fonts.load('40px Chewy')");expect(page).toContain("document.fonts.check('40px Chewy')");expect(page).toContain('document.fonts.ready');
@@ -27,7 +31,7 @@ describe('clay renderer skill examples',()=>{
   it('lays lyrics out in a centred, readable lower-third block',()=>{
     const require=createRequire(import.meta.url);const {renderSceneSvg}=require('../public/scene-renderer.js') as {renderSceneSvg:(scene:unknown,options?:unknown)=>string};
     const text='chai at midnight with the city lights';const svg=renderSceneSvg(fallbackScene(text,'night'),{line:text,words:[{word:'midnight',start:1,end:2}],time:1.5,quality:'export'});
-    expect(svg).toContain('fill="#2f2a3a"');expect(svg).toContain('class="lyric-block"');expect(svg).toContain('font-size="37.4"');expect(svg).toContain('font-size="22"');expect(svg).toContain('y="405"');expect(svg).toContain('font-family="Chewy"');
+    expect(svg).toContain('fill="#2f2a3a"');expect(svg).toContain('class="lyric-block"');expect(svg).toContain('font-size="37.4"');expect(svg).toContain('font-size="22"');expect(svg).toContain('y="404"');expect(svg).toContain('font-family="Chewy"');
     expect((svg.match(/class="lyric-word/g)??[]).length).toBe(7);expect(svg).toContain('class="lyric-word active"');
   });
   it('matches repeated sung segments A B C B C and turns unmatched segments into short interludes',()=>{
