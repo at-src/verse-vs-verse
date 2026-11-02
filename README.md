@@ -6,7 +6,7 @@ Built for the Codex x TwitchCon Hackathon with OpenAI Codex.
 
 **Demo video:** [youtu.be/LquaIDX2JBo](https://youtu.be/LquaIDX2JBo)
 
-![Line vs line on stream](docs/screens/01-battle.jpg)
+![Verse vs Verse live on Twitch](docs/screens/05-twitch-live.jpg)
 
 ![The scenes follow the lyrics](docs/screens/03-crown.jpg)
 
@@ -30,7 +30,7 @@ Chat commands: `!line`, `!1` to `!4`, `!song`, `!queue`, `!help`, and `!skip` fo
 
 - **Real Twitch integration.** Chat is read through EventSub, the bot replies through the Helix Chat API, the overlay runs as an OBS browser source, and a built-in broadcaster can go live without OBS.
 - **The chat's exact words.** Lyrics are sung word for word, and every clip is checked against the submitted lines.
-- **Scenes that follow the lyrics.** In "crown me king" the character wears the crown. In "dancing on the moon" it dances on the moon. It holds the controller, reacts to the mood of the line, and lip-syncs only on sung words. Shots crossfade on the beat.
+- **Scenes that follow the lyrics.** In "crown me king" the character wears the crown. In "dancing on the moon" it dances on the moon. It holds the controller, reacts to the mood of the line, and lip-syncs only on sung words. Shots cut on line changes, with a gentle camera move and a punch-in on the sung keyword.
 - **Music videos.** The finished song is rendered to MP4 with synced lyrics, intro and credits.
 - **Moderation.** Every line is screened for length, links, spam and content before it can appear on stream.
 - **Pluggable models.** Music, speech-to-text and voice run through [Pascal](https://pascalai.co), a voice AI platform that exposes many models through one API. Changing the music model is a single setting.
@@ -137,14 +137,14 @@ Open `/auth/login` and sign in as the broadcaster. The app requests these scopes
 
 ### 4. Add the overlay to the stream
 
-- **With OBS or Streamlabs:** add a Browser Source at 1920x1080 pointing to `http://localhost:3000/overlay`. The overlay is transparent and sits on top of the existing scene. Use `/overlay?stream=1` for the complete stream layout with the room backdrop and on-camera streamer.
+- **With OBS or Streamlabs:** add a Browser Source at 1920x1080 pointing to `http://localhost:3000/overlay`. The overlay is transparent and sits on top of the existing scene. Use `/overlay?stream=1` for the complete layout with a generated room backdrop and illustrated streamer avatar (no webcam feed).
 - **Without OBS:** `npm run broadcast` reads the stream key through the Twitch API, streams the overlay straight to the channel, and saves a local recording.
 
 ### 5. Run a song
 
-Go live, open `/dashboard`, and start a song. Viewers join with `!line <lyric>` during the write phase and `!1`, `!2` during the vote. The bot posts the instructions in chat each round, and `!help` repeats them.
+Go live, open `/dashboard`, and start a song. Viewers join with `!line <lyric>` during the write phase and `!1` to `!4` during the vote. The bot posts the instructions in chat each round, and `!help` repeats them.
 
-To test a setup before going live, `npm run rehearse -- demo-scripts/demo-song.json` plays a planned song through Twitch chat.
+To test the real Twitch chat flow before going live, connect the broadcaster at `/auth/login`, then authorize each test account used by the rehearsal plan at `/auth/login?actor=1`. The included plan uses `expressive_guy` and `skylake5`. Then run `npm run rehearse -- demo-scripts/demo-song.json`; it posts the planned lines and votes through Twitch chat. For a no-Twitch test, use the dashboard's **Simulate chat** panel instead.
 
 ### Hosting on a server
 
@@ -152,7 +152,7 @@ To run the app on a server instead of the streamer's PC:
 
 1. Serve it over HTTPS behind a reverse proxy such as Caddy or nginx.
 2. Set `TWITCH_REDIRECT_URI` to `https://your-domain/auth/callback`, and add the same URL in the Twitch Developer Console.
-3. Protect `/dashboard` and `/auth` at the proxy, for example with basic authentication, because the dashboard controls the stream.
+3. The app is designed for trusted local use. Before exposing it publicly, add authentication for `/dashboard` and its control APIs, and configure `/ws` so the dashboard and OBS overlay can connect only through your authorized setup. Keep `/auth/login` and `/auth/callback` reachable for Twitch OAuth; putting Basic Auth in front of `/auth/callback` will block login.
 4. Point the OBS Browser Source to `https://your-domain/overlay`.
 
 ## Tests
