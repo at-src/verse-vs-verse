@@ -104,7 +104,14 @@ export class TwitchService {
       const text = String(message.message?.text ?? '');
       // no reply per line or vote (spam and rate limits); the server announces each phase once instead
       const credited = applyActorPersona(login, userId, text, config.demoActorLogins);
-      if (credited.text.toLowerCase().startsWith('!line ')) await this.engine.submitLine({ text: credited.text.slice(6), login: credited.login, userId: credited.userId });
+      if (credited.text.trim().toLowerCase() === '!song') {
+        const state = this.engine.snapshot(); const writers = [...new Set(state.song.map((line) => `@${line.login}`))];
+        await this.sendChat(state.song.length ? `Now playing "${state.title}" — writers: ${writers.join(', ') || 'chat'}` : 'No song is playing right now.');
+      } else if (credited.text.trim().toLowerCase() === '!skip') {
+        const broadcaster = message.broadcaster_user_id === userId;
+        const moderator = message.badges?.some((badge: { set_id?: string }) => badge.set_id === 'moderator');
+        if ((broadcaster || moderator) && this.engine.skipPlay()) await this.sendChat('Skipping this clip.');
+      } else if (credited.text.toLowerCase().startsWith('!line ')) await this.engine.submitLine({ text: credited.text.slice(6), login: credited.login, userId: credited.userId });
       else if (/^![1-4]$/.test(credited.text.trim())) this.engine.vote(credited.userId, Number(credited.text.trim().slice(1)) - 1);
     }
   }

@@ -22,6 +22,7 @@ export class MockMusicProvider implements MusicProvider {
     return {
       audioUrl: `/media/mock-tone.wav?duration=${durationSec}`,
       durationSec,
+      lineTimings: lines.map((line, index) => ({ text: line.text, start: durationSec * index / Math.max(lines.length, 1), end: durationSec * (index + 1) / Math.max(lines.length, 1) })),
       words: words.map((word, index) => ({
         word,
         start: (durationSec * index) / Math.max(words.length, 1),
@@ -32,13 +33,8 @@ export class MockMusicProvider implements MusicProvider {
 }
 
 export class MockSceneArtist implements SceneArtist {
-  async create(line: CandidateLine, mood: string): Promise<SceneSpec> {
-    return {
-      backdrop: mood,
-      mascotPose: 'bounce',
-      keyword: line.text.split(/\s+/)[0] ?? 'verse',
-      propsSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 120"><path d="M20 90 Q90 5 160 90Z" fill="#f5bd75" stroke="#553b56" stroke-width="6"/><circle cx="90" cy="62" r="12" fill="#553b56"/></svg>',
-    };
+  async create(line: CandidateLine, _songSoFar: CandidateLine[] = [], mood = 'day'): Promise<SceneSpec> {
+    return { keyword: line.text.split(/\s+/)[0] ?? 'verse', mood: ['day','dream','night','warm','sea'].includes(mood) ? mood as SceneSpec['mood'] : 'day', ground: true, mascot: { pose: 'stand', x: 575, y: 370, scale: 1, facing: 'left' }, props: [] };
   }
 }
 

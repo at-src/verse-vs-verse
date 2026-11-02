@@ -2,6 +2,8 @@
 
 Chat writes a song one line at a time. The app runs with local mock adapters when provider keys are missing or a request fails. Real chat audio, judging, moderation, and scripted demo actors can be enabled independently.
 
+Each winning line becomes an animated clay scene following `skills/clay-scenes/SKILL.md`. The final song gets an MP4 music video in the background and a share page with lyrics and writer credits.
+
 ## Requirements and run
 
 - Node.js 22
@@ -13,7 +15,9 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard). SQLite is created at `./data/verse-vs-verse.sqlite`; generated Pascal audio is saved under `data/media`.
+Open [http://localhost:3000/dashboard](http://localhost:3000/dashboard). SQLite is created at `./data/verse-vs-verse.sqlite`; generated Pascal audio and MP4 videos are saved under `data/media`.
+
+For MP4 export, install ffmpeg and have Chrome or Chromium available. Set `FFMPEG_PATH`, `FFPROBE_PATH`, or `CHROME_PATH` in `.env` when they are not on PATH / at the default Windows Chrome location. Export runs after release in the background; it does not hold up the round engine. The share URL is `/song/:id`; its page updates while export is still running.
 
 ## Local simulate chat
 
@@ -31,6 +35,8 @@ Set keys in `.env`; each adapter logs a warning and falls back to its mock if a 
 - **LLM judge and title:** set `LLM_API_KEY`; optionally change `LLM_BASE_URL` and `LLM_MODEL`. The app sends JSON-mode `/chat/completions` requests and validates selected lines against the candidate set.
 - **Moderation:** `MODERATION_PROVIDER=openai` uses OpenAI `omni-moderation-latest` when `OPENAI_API_KEY` is set. `MODERATION_PROVIDER=none` keeps the local length, link, repeat, and blocklist checks.
 - **Music and voice:** set `PASCAL_API_KEY`. Configure `PASCAL_MUSIC_MODEL`, `PASCAL_RELEASE_MODEL`, `PASCAL_TTS_MODEL`, and `PASCAL_ASR_MODEL`. Pascal audio is downloaded to `data/media` because provider URLs expire. Whisper timings are aligned to known lyrics; timing falls back to even spacing if alignment fails. TTS model parameters are read from `/models`.
+
+For music, lyrics are sent separately in the `lyrics` field and formatted with `[Verse 1]`, `[Chorus]`, `[Verse 2]`, and `[Bridge]` tags. Pascal `lyrics_lines` timing is preferred; word-level ASR refines it only when it aligns. Audio duration is measured from WAV headers or `ffprobe`, rather than assumed from the requested duration. `GENRES` in `src/config.ts` contains descriptors for each dashboard genre.
 
 Pascal provider response formats can evolve. If an unsupported response shape occurs, the request logs a warning and returns mock audio/voice so the round remains playable.
 
@@ -53,6 +59,14 @@ Only senders listed in `DEMO_ACTOR_LOGINS` get persona attribution. Their `!line
 ## OBS overlay
 
 Add a Browser Source URL `http://localhost:3000/overlay`, width `1920`, height `1080`. The page background is transparent.
+
+The overlay shows the full animated scene during `PLAY` and the latest scene as a small preview during `WRITE` and `VOTE`. The pure SVG renderer is `public/scene-renderer.js`; its clay filter, mascot poses, mood backdrops, lettering, and prop entrances follow the scene skill.
+
+## Scene preview and chat commands
+
+- Open [http://localhost:3000/preview](http://localhost:3000/preview) to generate an LLM scene for any lyric and browse the 20 most recent scenes.
+- `!song` posts the current title and credited writers.
+- `!skip` advances the current `PLAY` early only for the broadcaster or a moderator.
 
 ## Config and tests
 

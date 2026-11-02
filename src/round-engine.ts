@@ -13,7 +13,7 @@ export type RoundEvent =
   | { type: 'VOICE'; audioUrl: string };
 export type RoundState = {
   phase: Phase; round: number; roundsPerSong: number; style: string; mood: string;
-  deadline: number | null; lines: CandidateLine[]; shortlist: CandidateLine[]; votes: number[];
+  deadline: number | null; phaseStartedAt: number; clipStartedAt: number | null; lines: CandidateLine[]; shortlist: CandidateLine[]; votes: number[];
   song: CandidateLine[]; clip: MusicClip | null; scenes: SceneSpec[]; title: string;
 };
 type EngineOptions = {
@@ -21,7 +21,9 @@ type EngineOptions = {
   channelId: string; channelLogin: string; judge: LineJudge; moderation: Moderation;
   music: MusicProvider; artist: SceneArtist; voice: Voice;
   now?: () => number; broadcast?: (event: RoundEvent) => void;
-  saveSong?: (song: { id: string; channelId: string; title: string; style: string; createdAt: number; clip: MusicClip; lines: CandidateLine[] }) => void;
+  saveSong?: (song: { id: string; channelId: string; title: string; style: string; createdAt: number; clip: MusicClip; lines: CandidateLine[]; scenes: SceneSpec[] }) => void;
+  saveScene?: (line: string, scene: SceneSpec) => void;
+  onRelease?: (song: { id: string; title: string; clip: MusicClip; lines: CandidateLine[]; scenes: SceneSpec[] }) => void;
 };
 
 const LINK_OR_EMOTE = /(https?:\/\/\S+|www\.\S+|\b\w+\.com\b|\b\w+\.gg\b)/i;
@@ -38,9 +40,10 @@ export class RoundEngine {
   private roundUsers = new Set<string>();
   private roundVoters = new Set<string>();
   private state: RoundState = {
-    phase: 'IDLE', round: 0, roundsPerSong: 4, style: 'pop', mood: 'playful', deadline: null,
+    phase: 'IDLE', round: 0, roundsPerSong: 4, style: 'pop', mood: 'playful', deadline: null, phaseStartedAt: 0, clipStartedAt: null,
     lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: [], title: 'Verse vs Verse',
   };
+  private phaseStartedAt = 0;
 
   constructor(private readonly options: EngineOptions) {
     this.now = options.now ?? Date.now;
@@ -52,6 +55,8 @@ export class RoundEngine {
 
   private setPhase(phase: Phase, seconds?: number): void {
     this.state.phase = phase;
+    this.phaseStartedAt = this.now();
+    this.state.phaseStartedAt = this.phaseStartedAt;
     this.state.deadline = seconds ? this.now() + seconds * 1000 : null;
     this.broadcast({ type: 'STATE', state: this.snapshot() });
   }
@@ -64,7 +69,7 @@ export class RoundEngine {
     if (this.songTimes.length >= this.options.maxSongsPerHour) throw new Error('Hourly song limit reached');
     this.songTimes.push(this.now());
     this.usersThisHour.clear();
-    this.state = { ...this.state, phase: 'IDLE', round: 0, style, mood, lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: [], title: 'Verse vs Verse', deadline: null };
+    this.state = { ...this.state, phase: 'IDLE', round: 0, style, mood, lines: [], shortlist: [], votes: [], song: [], clip: null, scenes: [], title: 'Verse vs Verse', deadline: null, clipStartedAt: null };
     await this.beginWrite();
   }
 
@@ -133,9 +138,13 @@ export class RoundEngine {
     const newLines = winner ? [winner] : [];
     const [clip, scenes] = await Promise.all([
       this.options.music.render(this.state.style, this.state.song, this.state.mood),
-      Promise.all(newLines.map((line) => this.options.artist.create(line, this.state.mood))),
+      Promise.all(newLines.map((line) => this.options.artist.create(line, this.state.song, this.state.mood))),
     ]);
     this.state.clip = clip;
+    this.state.clipStartedAt = this.now();
+    this.state.clipStartedAt = this.now();
+    if (winner && scenes[0]) this.options.saveScene?.(winner.text, scenes[0]);
+    scenes.forEach((scene, index) => { const lyric = newLines[index]; if (lyric) scene.line = lyric.text; });
     this.state.scenes = scenes;
     scenes.forEach((scene, index) => { const line = newLines[index]; if (line) this.broadcast({ type: 'SCENE', line, scene }); });
     this.broadcast({ type: 'CLIP', clip });
@@ -158,18 +167,28 @@ export class RoundEngine {
         catch (error) { console.warn('[Title] falling back to default:', error); }
       }
       this.state.clip = clip;
-      this.options.saveSong?.({ id, channelId: this.options.channelId, title: this.state.title, style: this.state.style, createdAt: this.now(), clip, lines: [...this.state.song] });
+      this.state.clipStartedAt = this.now();
+      this.options.saveSong?.({ id, channelId: this.options.channelId, title: this.state.title, style: this.state.style, createdAt: this.now(), clip, lines: [...this.state.song], scenes: [...this.state.scenes] });
       this.broadcast({ type: 'CLIP', clip });
       this.broadcast({ type: 'SAVED', songId: id });
       this.broadcast({ type: 'STATE', state: this.snapshot() });
-      const voiceUrl = await this.options.voice.speak(`That was ${this.state.title}!`);
-      if (voiceUrl) this.broadcast({ type: 'VOICE', audioUrl: voiceUrl });
       // hold the release moment on screen, then go back to IDLE so the next song can start
       if (this.releaseTimer) clearTimeout(this.releaseTimer);
       this.releaseTimer = setTimeout(() => { if (this.state.phase === 'RELEASE') this.setPhase('IDLE'); }, (this.options.releaseSeconds ?? 20) * 1000);
+      void this.options.voice.speak(`That was ${this.state.title}!`).then((voiceUrl) => { if (voiceUrl) this.broadcast({ type: 'VOICE', audioUrl: voiceUrl }); }).catch((error) => console.warn('[Voice] release announcement failed:', error));
+      this.options.onRelease?.({ id, title: this.state.title, clip, lines: [...this.state.song], scenes: [...this.state.scenes] });
       return;
     }
     await this.beginWrite();
+  }
+
+  skipPlay(): boolean {
+    if (this.state.phase !== 'PLAY') return false;
+    if (this.playTimer) clearTimeout(this.playTimer);
+    this.playTimer = null;
+    if (this.state.round >= this.options.roundsPerSong) this.playTimer = setTimeout(() => void this.finishPlay(), 100);
+    else void this.finishPlay();
+    return true;
   }
 
   private clearTimers(): void {

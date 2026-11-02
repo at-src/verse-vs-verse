@@ -7,7 +7,7 @@ const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${l
 ws.onmessage = ({ data }) => {
   const event = JSON.parse(data);
   if (event.type === 'STATE') { state = event.state; render(); }
-  if (event.type === 'SCENE') renderScene($('scene'), event.scene);
+  if (event.type === 'SCENE') renderScene($('scene'), event.scene, { line: event.line.text, words: state?.clip?.words ?? [] });
   if (event.type === 'CLIP') play(event.clip);
   if (event.type === 'VOICE') { const voice = new Audio(event.audioUrl); voice.play().catch(() => undefined); }
 };
@@ -21,9 +21,12 @@ function render() {
   $('headline').innerHTML = headline;
   if (state.phase === 'WRITE') $('content').innerHTML = state.lines.map((line) => `<div>@${escapeHtml(line.login)} · ${escapeHtml(line.text)}</div>`).join('');
   else if (state.phase === 'VOTE') $('content').innerHTML = state.shortlist.map((line, i) => `<div>!${i + 1} · ${escapeHtml(line.text)} <small>(${state.votes[i] || 0})</small></div>`).join('');
-  else if (state.phase === 'PLAY') $('content').innerHTML = renderWords(state.clip?.words ?? []);
+  else if (state.phase === 'PLAY') $('content').innerHTML = '';
   else if (state.phase === 'RELEASE') $('content').innerHTML = `<div>${state.song.map((line) => escapeHtml(line.text)).join(' · ')}</div>`;
   else $('content').textContent = '';
+  $('preview-scene').style.display = ['WRITE','VOTE'].includes(state.phase) && state.scenes?.length ? 'block' : 'none';
+  if (['WRITE','VOTE'].includes(state.phase) && state.scenes?.length) renderScene($('preview-scene'), state.scenes.at(-1), { line: state.scenes.at(-1).line ?? state.song.at(-1)?.text ?? state.scenes.at(-1).keyword });
+  $('scene').style.display = state.phase === 'PLAY' ? 'block' : 'none';
 }
 
 function renderWords(words) { return words.map((item, i) => `<span class="word" data-start="${item.start}" data-end="${item.end}" data-index="${i}">${escapeHtml(item.word)}</span>`).join(''); }

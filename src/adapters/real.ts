@@ -1,9 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { CandidateLine, LineJudge, Moderation, MusicClip, MusicProvider, TimedWord, Voice } from './types.js';
-import { MockLineJudge, MockModeration, MockMusicProvider, MockVoice } from './mock.js';
+import type { CandidateLine, LineJudge, Moderation, MusicClip, MusicProvider, SceneArtist, SceneSpec, TimedWord, Voice } from './types.js';
+import { MockLineJudge, MockModeration, MockMusicProvider, MockSceneArtist, MockVoice } from './mock.js';
 import { config } from '../config.js';
+import { claySystemPrompt, fallbackScene, validateScene } from '../scenes.js';
 
 function warn(name: string, error: unknown): void {
   console.warn(`[${name}] falling back to mock:`, error instanceof Error ? error.message : error);
@@ -51,6 +52,30 @@ export class OpenCompatibleJudge implements LineJudge {
   }
 }
 
+export class LlmSceneArtist implements SceneArtist {
+  constructor(private readonly apiKey = config.llmApiKey, private readonly baseUrl = config.llmBaseUrl, private readonly model = config.llmModel) {}
+  async create(line: CandidateLine, songSoFar: CandidateLine[], mood: string): Promise<SceneSpec> {
+    if (!this.apiKey) return new MockSceneArtist().create(line, songSoFar, mood);
+    const system = await claySystemPrompt();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const content = await this.chat(`${system}\nReturn only the scene spec JSON object. Props must use palette colors only and simple SVG groups within the 800x450 viewBox.`, { lyric: line.text, song_so_far: songSoFar.map((item) => item.text), mood, retry: attempt > 0 ? 'Previous response was invalid. Return a valid schema and safe SVG.' : undefined });
+        return validateScene(JSON.parse(content), line.text);
+      } catch (error) { if (attempt === 0) console.warn('[SceneArtist] invalid scene; retrying:', error instanceof Error ? error.message : error); }
+    }
+    console.warn('[SceneArtist] using simple fallback scene');
+    return fallbackScene(line.text, mood);
+  }
+  private async chat(instructions: string, input: unknown): Promise<string> {
+    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: this.model, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: instructions }, { role: 'user', content: JSON.stringify(input) }] }) });
+    if (!response.ok) throw new Error(`Chat completion returned ${response.status}`);
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Chat completion returned no content');
+    return content;
+  }
+}
+
 function fallbackTitle(lines: CandidateLine[]): string {
   const words = lines.flatMap((line) => line.text.split(/\s+/)).slice(0, 4);
   return words.length ? words.join(' ').replace(/[.!?,]+$/g, '') : 'The Chat Song';
@@ -80,7 +105,7 @@ function localCheck(text: string): 'ok' | 'blocked' {
 }
 
 type PascalArtifact = { name?: string; content_type?: string; url?: string };
-type PascalJob = { id: string; status: string; result?: { artifacts?: PascalArtifact[] }; playback_url?: string; error_code?: string; error_message?: string };
+type PascalJob = { id: string; status: string; result?: { artifacts?: PascalArtifact[]; lyrics_lines?: Array<{ text: string; start: number; end?: number }> }; playback_url?: string; error_code?: string; error_message?: string };
 type PascalModels = Array<{ id?: string; name?: string; parameters_schema?: Record<string, unknown> }>;
 export class PascalProvider implements MusicProvider {
   constructor(private readonly apiKey = config.pascalApiKey, private readonly baseUrl = config.pascalBaseUrl) {}
@@ -92,12 +117,13 @@ export class PascalProvider implements MusicProvider {
   }
 
   private async renderReal(style: string, lines: CandidateLine[], mood: string, release: boolean): Promise<MusicClip> {
-    const lyrics = lines.map((line) => line.text).join('\n');
+    const lyrics = formatLyrics(lines);
     const model = release ? config.pascalReleaseModel : config.pascalMusicModel;
     const long = release;
-    const prompt = `Create a ${style} song with a ${mood} mood at a natural tempo. Sing these lyrics exactly: ${lyrics}`;
+    const descriptor = config.genres[style] ?? `${style} music`;
+    const prompt = `${style}, ${descriptor}, ${mood}; vocals start immediately, no long intro`;
     const duration = long ? 30 : 10;
-    const job = await this.requestJson<PascalJob>('/music', { model, prompt, duration_seconds: duration, bpm: 100 });
+    const job = await this.requestJson<PascalJob>('/music', { model, prompt, lyrics, duration_seconds: duration, bpm: 100 });
     const finished = await this.pollJob(job);
     const artifact = finished.result?.artifacts?.find((item) => item.content_type?.startsWith('audio/')) ?? finished.result?.artifacts?.[0];
     const url = artifact?.url ?? finished.playback_url;
@@ -109,10 +135,11 @@ export class PascalProvider implements MusicProvider {
     const fileName = `${randomUUID()}${ext}`;
     const mediaDir = resolve('data/media'); await mkdir(mediaDir, { recursive: true });
     await writeFile(resolve(mediaDir, fileName), bytes);
-    const durationSec = long ? 30 : 10;
-    const words = lines.flatMap((line) => line.text.trim().split(/\s+/));
+    const durationSec = await measureDuration(bytes, ext, resolve(mediaDir, fileName));
+    const lyricsLines = alignLyricLines(lines, finished.result?.lyrics_lines, durationSec);
+    const words = lyricsLines.flatMap((line) => spreadLineWords(line.text, line.start, line.end));
     const timings = await this.transcribe(bytes, fileName, ext).catch((error) => { warn('Pascal ASR', error); return null; });
-    return { audioUrl: `/media/${fileName}`, durationSec, words: align(words, timings, durationSec) };
+    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, words: refineTimings(words, timings) };
   }
 
   private async pollJob(initial: PascalJob): Promise<PascalJob> {
@@ -182,22 +209,62 @@ function ttsParams(schema: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
-function align(lyrics: string[], asr: TimedWord[] | null, duration: number): TimedWord[] {
-  if (!lyrics.length) return [];
-  if (!asr?.length) return even(lyrics, duration);
-  const normalized = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}'’]/gu, '');
+export function formatLyrics(lines: CandidateLine[]): string {
+  const sections = ['[Verse 1]', '[Chorus]', '[Verse 2]', '[Bridge]'];
+  return lines.map((line, index) => `${index >= sections.length ? '[Chorus]' : sections[index]}\n${line.text}`).join('\n');
+}
+
+type LineTiming = { text: string; start: number; end: number };
+export function alignLyricLines(lines: CandidateLine[], returned: Array<{ text: string; start: number; end?: number }> | undefined, duration: number): LineTiming[] {
+  if (!lines.length) return [];
+  const matched = lines.map((line) => returned?.find((item) => normalize(item.text) === normalize(line.text)));
+  const usable = matched.every((item) => item && Number.isFinite(item.start));
+  if (!usable) return lines.map((line, index) => ({ text: line.text, start: duration * index / lines.length, end: duration * (index + 1) / lines.length }));
+  return lines.map((line, index) => {
+    const item = matched[index]!;
+    const start = clamp(item.start, 0, duration);
+    const nextStart = matched[index + 1] ? clamp(matched[index + 1]!.start, start, duration) : duration;
+    return { text: line.text, start, end: clamp(item.end ?? nextStart, start, duration) };
+  });
+}
+
+function spreadLineWords(text: string, start: number, end: number): TimedWord[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  return words.map((word, index) => ({ word, start: start + (end - start) * index / words.length, end: start + (end - start) * (index + 0.9) / words.length }));
+}
+
+function refineTimings(lyrics: TimedWord[], asr: TimedWord[] | null): TimedWord[] {
+  if (!asr?.length) return lyrics;
   const result: TimedWord[] = [];
   let cursor = 0;
   for (const word of lyrics) {
-    const wanted = normalized(word);
-    let found = -1;
-    for (let i = cursor; i < Math.min(asr.length, cursor + 5); i += 1) if (normalized(asr[i]!.word) === wanted) { found = i; break; }
-    if (found < 0) return even(lyrics, duration);
-    result.push({ word, start: asr[found]!.start, end: asr[found]!.end }); cursor = found + 1;
+    const match = asr.slice(cursor, cursor + 3).findIndex((candidate) => normalize(candidate.word) === normalize(word.word));
+    if (match < 0) return lyrics;
+    const candidate = asr[cursor + match]!;
+    if (candidate.start < word.start - 1.5 || candidate.start > word.end + 1.5) return lyrics;
+    result.push({ word: word.word, start: candidate.start, end: candidate.end }); cursor += match + 1;
   }
   return result;
 }
 
-function even(words: string[], duration: number): TimedWord[] {
-  return words.map((word, i) => ({ word, start: duration * i / words.length, end: duration * (i + 0.9) / words.length }));
+function normalize(text: string): string { return text.toLowerCase().replace(/[^\p{L}\p{N}'’]/gu, ''); }
+function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
+
+export async function measureDuration(bytes: Buffer, ext: string, existingPath?: string): Promise<number> {
+  if (ext === '.wav' && bytes.length > 44) {
+    const dataSize = bytes.readUInt32LE(40); const byteRate = bytes.readUInt32LE(28);
+    if (byteRate > 0) return dataSize / byteRate;
+  }
+  const ffprobe = process.env.FFPROBE_PATH ?? 'ffprobe';
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const filePath = existingPath ?? resolve('data/media', `${randomUUID()}${ext}`);
+  if (!existingPath) await writeFile(filePath, bytes);
+  try {
+    const { stdout } = await run(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath]);
+    const duration = Number(stdout.trim());
+    if (!Number.isFinite(duration) || duration <= 0) throw new Error('ffprobe returned an invalid duration');
+    return duration;
+  } finally { const { unlink } = await import('node:fs/promises'); await unlink(filePath).catch(() => undefined); }
 }

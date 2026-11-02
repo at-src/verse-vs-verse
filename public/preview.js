@@ -1,0 +1,5 @@
+import { renderScene } from './scene-renderer.js';
+const $=(id)=>document.getElementById(id);
+async function gallery(){const scenes=await(await fetch('/api/scenes')).json();$('gallery').innerHTML='';for(const scene of scenes){const card=document.createElement('article');card.className='gallery-card';const stage=document.createElement('div');stage.className='preview-canvas';renderScene(stage,scene);const caption=document.createElement('small');caption.textContent=scene.keyword;card.append(stage,caption);$('gallery').append(card);}}
+$('preview-form').addEventListener('submit',async event=>{event.preventDefault();$('message').textContent='Making a scene…';const response=await fetch('/api/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({line:$('line').value,mood:$('mood').value})});const data=await response.json();if(!response.ok){$('message').textContent=data.error;return;}$('message').textContent='Scene ready.';renderScene($('preview'),data.scene,{line:$('line').value});void gallery();});
+void gallery();

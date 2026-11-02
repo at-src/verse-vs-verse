@@ -5,10 +5,10 @@ import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { db } from './db.js';
-import { MockSceneArtist } from './adapters/mock.js';
-import { OpenCompatibleJudge, PascalProvider, RealModeration } from './adapters/real.js';
+import { OpenCompatibleJudge, PascalProvider, RealModeration, LlmSceneArtist } from './adapters/real.js';
 import { RoundEngine, type RoundEvent, type RoundState, type CandidateLine } from './round-engine.js';
 import { TwitchService } from './twitch.js';
+import { exportMusicVideo } from './video-export.js';
 
 const app = express();
 const server = createServer(app);
@@ -37,20 +37,32 @@ function broadcast(event: RoundEvent): void {
   for (const client of wss.clients) if (client.readyState === 1) client.send(data);
 }
 
-const saveSong = db.prepare(`INSERT INTO songs (id, channel_id, title, style, created_at, audio_url, duration_sec, lines_json)
-  VALUES (@id, @channelId, @title, @style, @createdAt, @audioUrl, @durationSec, @linesJson)`);
+const saveSong = db.prepare(`INSERT INTO songs (id, channel_id, title, style, created_at, audio_url, duration_sec, lines_json, video_status)
+  VALUES (@id, @channelId, @title, @style, @createdAt, @audioUrl, @durationSec, @linesJson, @videoStatus)`);
 
 const engine = new RoundEngine({
   writeSeconds: config.writeSeconds, voteSeconds: config.voteSeconds,
   roundsPerSong: config.roundsPerSong, maxSongsPerHour: config.maxSongsPerHour, releaseSeconds: config.releaseSeconds,
   channelId: 'local', channelLogin: config.twitchChannelLogin || 'local',
   judge: new OpenCompatibleJudge(), moderation: new RealModeration(), music: new PascalProvider(),
-  artist: new MockSceneArtist(), voice: new PascalProvider(), broadcast,
+  artist: new LlmSceneArtist(), voice: new PascalProvider(), broadcast,
   saveSong: (song) => saveSong.run({
     id: song.id, channelId: song.channelId, title: song.title, style: song.style,
     createdAt: song.createdAt, audioUrl: song.clip.audioUrl, durationSec: song.clip.durationSec,
     linesJson: JSON.stringify(song.lines),
+    videoStatus: 'rendering',
   }),
+  saveScene: (line, scene) => db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line, JSON.stringify(scene), Date.now()),
+  onRelease: (song) => {
+    const audioPath = song.clip.audioUrl.startsWith('/media/') && !song.clip.audioUrl.includes('mock-tone') ? resolve('data', song.clip.audioUrl.slice('/media/'.length).split('?')[0]) : null;
+    if (!audioPath) return;
+    const lineTimings = song.clip.lineTimings ?? song.lines.map((line, index) => ({ text: line.text, start: song.clip.durationSec * index / Math.max(song.lines.length,1), end: song.clip.durationSec * (index + 1) / Math.max(song.lines.length,1) }));
+  const videoScenes = song.lines.map((line, index) => ({ scene: song.scenes[index] ?? { keyword: line.text.split(/\s+/)[0] ?? 'song', mood: 'day' as const, ground: true, mascot: { pose: 'stand' as const, x: 580, y: 370, scale: 1, facing: 'left' as const }, props: [] }, line, words: song.clip.words.filter((word) => word.start >= (lineTimings[index]?.start ?? 0) && word.start < (lineTimings[index]?.end ?? song.clip.durationSec)) }));
+    void exportMusicVideo(song.id, song.title, audioPath, song.clip.durationSec, videoScenes).then((videoUrl) => {
+      db.prepare("UPDATE songs SET video_url=?, video_status='ready' WHERE id=?").run(videoUrl, song.id);
+      void twitch.sendChat(`Music video is ready: http://localhost:${config.port}/song/${song.id}`);
+    }).catch((error) => { console.error('[Music video export]', error); db.prepare("UPDATE songs SET video_status='failed' WHERE id=?").run(song.id); });
+  },
 });
 const twitch = new TwitchService(engine);
 twitchRef = twitch;
@@ -62,14 +74,23 @@ app.get('/', (_req, res) => res.redirect('/dashboard'));
 app.get('/dashboard', (_req, res) => res.sendFile(resolve('public/dashboard.html')));
 app.get('/overlay', (_req, res) => res.sendFile(resolve('public/overlay.html')));
 app.get('/api/state', (_req, res) => res.json(engine.snapshot()));
+app.get('/api/scenes', (_req, res) => res.json(db.prepare('SELECT line, scene_json FROM scenes ORDER BY created_at DESC LIMIT 20').all().map((raw) => { const row=raw as {line:string;scene_json:string};return {...JSON.parse(row.scene_json),line:row.line}; })));
+app.post('/api/preview', async (req, res) => {
+  const text = String(req.body.line ?? '').slice(0, 80); const mood = String(req.body.mood ?? 'day');
+  if (!text.trim()) return res.status(400).json({ error: 'Enter a lyric line.' });
+  try {
+    const line = { text, login: 'preview', userId: 'preview' };
+    const scene = await new LlmSceneArtist().create(line, [], mood);
+    db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), text, JSON.stringify(scene), Date.now());
+    scene.line = text;
+    res.json({ scene });
+  } catch { res.status(500).json({ error: 'Could not create preview.' }); }
+});
+app.get('/preview', (_req, res) => res.sendFile(resolve('public/preview.html')));
 app.get('/api/config', (_req, res) => res.json({ writeSeconds: config.writeSeconds, voteSeconds: config.voteSeconds, roundsPerSong: config.roundsPerSong }));
 app.get('/api/twitch/status', (_req, res) => {
   const account = db.prepare("SELECT user_id AS id, login FROM twitch_tokens WHERE user_id NOT LIKE 'demo-actor:%' ORDER BY updated_at DESC LIMIT 1").get() as { id: string; login: string } | undefined;
   res.json({ connected: Boolean(account), account: account?.login ?? null, eventSub: twitch.connected() });
-});
-app.get('/api/twitch/status', (_req, res) => {
-  const account = db.prepare('SELECT user_id AS id, login FROM twitch_tokens ORDER BY updated_at DESC LIMIT 1').get() as { id: string; login: string } | undefined;
-  res.json({ connected: Boolean(account), account: account?.login ?? null });
 });
 app.post('/api/twitch/connect', async (_req, res) => {
   try { await twitch.start(); res.json({ connected: true }); }
@@ -95,7 +116,7 @@ app.post('/api/simulate', async (req, res) => {
   res.json({ accepted, state: engine.snapshot() });
 });
 app.get('/api/songs', (_req, res) => {
-  const songs = db.prepare('SELECT id, channel_id AS channelId, title, style, created_at AS createdAt, duration_sec AS durationSec, audio_url AS audioUrl, lines_json AS linesJson FROM songs ORDER BY created_at DESC LIMIT 50').all() as Array<Record<string, unknown>>;
+  const songs = db.prepare('SELECT id, channel_id AS channelId, title, style, created_at AS createdAt, duration_sec AS durationSec, audio_url AS audioUrl, video_url AS videoUrl, video_status AS videoStatus, lines_json AS linesJson FROM songs ORDER BY created_at DESC LIMIT 50').all() as Array<Record<string, unknown>>;
   res.json(songs.map((song) => ({ ...song, lines: JSON.parse(String(song.linesJson)) })));
 });
 app.get('/auth/login', (_req, res) => {
@@ -130,9 +151,12 @@ app.get('/auth/callback', async (req, res) => {
   } catch (error) { res.status(502).send(error instanceof Error ? error.message : 'Twitch connection failed.'); }
 });
 app.get('/song/:id', (req, res) => {
-  const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(req.params.id);
+  const song = db.prepare('SELECT * FROM songs WHERE id = ?').get(req.params.id) as { id: string; title: string; style: string; audio_url: string; video_url: string | null; video_status: string; lines_json: string } | undefined;
   if (!song) return res.status(404).send('Song not found');
-  res.type('html').send(`<main style="font:20px system-ui;max-width:800px;margin:10vh auto"><h1>${String((song as { title: string }).title)}</h1><p>Style: ${String((song as { style: string }).style)}</p><pre>${String((song as { lines_json: string }).lines_json)}</pre><audio controls src="${String((song as { audio_url: string }).audio_url)}"></audio></main>`);
+  const lines = JSON.parse(song.lines_json) as CandidateLine[];
+  const escape = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]!));
+  const player = song.video_url ? `<video controls playsinline src="${escape(song.video_url)}"></video><p><a download href="${escape(song.video_url)}">Download music video</a></p>` : `<p>Music video: ${escape(song.video_status)}</p><audio controls src="${escape(song.audio_url)}"></audio><script>setTimeout(()=>location.reload(),5000)</script>`;
+  res.type('html').send(`<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escape(song.title)}</title><style>body{font:18px system-ui;background:#17141a;color:#fffaf0;max-width:1000px;margin:4rem auto;padding:1rem}video{width:100%;border-radius:14px}li{margin:.7em 0}a{color:#7fd1c7}</style><h1>${escape(song.title)}</h1><p>${escape(song.style)} · <a href="/overlay">Verse vs Verse</a></p>${player}<h2>Lyrics & credits</h2><ol>${lines.map((line) => `<li>${escape(line.text)} <small>— @${escape(line.login)}</small></li>`).join('')}</ol></html>`);
 });
 app.get('/media/mock-tone.wav', (_req, res) => {
   const sampleRate = 22050;
@@ -156,7 +180,7 @@ app.get('/media/mock-tone.wav', (_req, res) => {
 
 app.get('/media/:file', (req, res) => {
   const file = String(req.params.file);
-  if (!/^[a-f0-9-]+\.(wav|mp3|audio)$/i.test(file)) return res.sendStatus(404);
+  if (!/^[a-f0-9-]+\.(wav|mp3|audio|mp4)$/i.test(file)) return res.sendStatus(404);
   res.sendFile(resolve('data/media', file));
 });
 

@@ -72,4 +72,15 @@ describe('RoundEngine', () => {
     engine.stop();
     await expect(engine.start()).rejects.toThrow('Hourly song limit reached');
   });
+
+  it('allows PLAY skip only through the explicit engine method', async () => {
+    const engine = makeEngine(); await engine.start();
+    await engine.submitLine({ text: 'a gentle cat', login: 'one', userId: '1' });
+    await engine.finishWrite(); await engine.finishVote();
+    expect(engine.snapshot().phase).toBe('PLAY');
+    expect(engine.skipPlay()).toBe(true);
+    await Promise.resolve();
+    expect(['WRITE','RELEASE']).toContain(engine.snapshot().phase);
+    expect(engine.skipPlay()).toBe(false);
+  });
 });

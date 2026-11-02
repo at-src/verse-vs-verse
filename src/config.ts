@@ -5,7 +5,18 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+export const GENRES: Record<string, string> = {
+  pop: 'bright, buoyant, polished pop with a catchy hook',
+  'lo-fi': 'mellow, hazy, warm vinyl crackle, soft piano',
+  rock: 'energetic, punchy drums, crunchy guitars, anthemic',
+  synthwave: 'nostalgic, neon, driving synths',
+  ballad: 'tender, heartfelt, spacious piano and strings',
+  'hip-hop': 'confident, rhythmic, crisp drums and deep bass',
+  'desi pop': 'bright, dhol and synth, catchy hook',
+};
+
 export const config = {
+  genres: GENRES,
   port: positiveInt(process.env.PORT, 3000),
   databasePath: process.env.DATABASE_PATH ?? './data/verse-vs-verse.sqlite',
   writeSeconds: positiveInt(process.env.WRITE_SECONDS, 45),
@@ -25,7 +36,7 @@ export const config = {
   pascalApiKey: process.env.PASCAL_API_KEY ?? '',
   pascalBaseUrl: process.env.PASCAL_BASE_URL ?? 'https://api.pascalai.co/v1',
   pascalMusicModel: process.env.PASCAL_MUSIC_MODEL ?? 'lyria-3-clip-preview',
-  pascalReleaseModel: process.env.PASCAL_RELEASE_MODEL ?? 'lyria-3.5',
+  pascalReleaseModel: process.env.PASCAL_RELEASE_MODEL ?? 'lyria-3-pro-preview',
   pascalTtsModel: process.env.PASCAL_TTS_MODEL ?? '',
   pascalAsrModel: process.env.PASCAL_ASR_MODEL ?? 'whisper-large-v3',
   demoActorLogins: (process.env.DEMO_ACTOR_LOGINS ?? '').split(',').map((login) => login.trim().toLowerCase()).filter(Boolean),
