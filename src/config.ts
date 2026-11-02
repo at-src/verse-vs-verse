@@ -39,7 +39,8 @@ export const config = {
   pascalMusicModel: process.env.PASCAL_MUSIC_MODEL ?? 'lyria-3-clip-preview',
   pascalReleaseModel: process.env.PASCAL_RELEASE_MODEL ?? 'lyria-3-pro-preview',
   pascalTtsModel: process.env.PASCAL_TTS_MODEL ?? '',
-  pascalAsrModel: process.env.PASCAL_ASR_MODEL ?? 'whisper-large-v3',
+  // qwen3-asr with the lyrics as a prompt: tested on sung tracks, word starts within ~0.1 s; whisper hallucinated and lost whole choruses
+  pascalAsrModel: process.env.PASCAL_ASR_MODEL ?? 'qwen3-asr-1.7b',
   demoActorLogins: (process.env.DEMO_ACTOR_LOGINS ?? '').split(',').map((login) => login.trim().toLowerCase()).filter(Boolean),
   demoScriptPath: process.env.DEMO_SCRIPT_PATH ?? './demo-scripts/demo.json',
 };

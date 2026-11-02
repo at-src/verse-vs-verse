@@ -6,7 +6,7 @@ import type { CandidateLine, MusicClip, SceneSpec } from './adapters/types.js';
 import { fallbackScene } from './scenes.js';
 
 export type VideoScene = { lineKey: string; scene: SceneSpec; line: CandidateLine; channelName?: string; start: number; end: number; words: MusicClip['words']; interlude?: boolean };
-export type SungSegment = {text:string;start:number;end?:number};
+export type SungSegment = {text:string;start:number;end?:number;words?:MusicClip['words']};
 export type VideoFrame = { entry: VideoScene; sceneStart: number; cameraStart: number; interlude: boolean };
 export const VIDEO_INTRO_SECONDS = 2;
 export const VIDEO_CREDITS_SECONDS = 3;
@@ -27,9 +27,11 @@ export function buildVideoTimeline(segments:SungSegment[],chatScenes:VideoScene[
   const timeline:VideoScene[]=[];let cursor=0;let interludeCount=0;
   const makeInterlude=(start:number,end:number,index:number):VideoScene=>{const source=chatScenes[interludeCount++%chatScenes.length]!;return{...source,lineKey:source.lineKey+'#interlude-'+index,start,end,words:[],interlude:true};};
   const pushChunks=(source:VideoScene,start:number,end:number,interlude:boolean)=>{let at=start,part=0;while(at<end-0.001){const stop=Math.min(end,at+8);timeline.push({...source,start:at,end:stop,interlude:interlude||part>0,words:interlude||part>0?[]:source.words.filter(word=>word.start<stop&&word.end>at)});at=stop;part++;}};
-  for(let i=0;i<ordered.length;i++){const segment=ordered[i]!;const start=Math.max(0,Math.min(duration,segment.start));const end=Math.max(start,Math.min(duration,segment.end??ordered[i+1]?.start??duration));if(start>cursor+0.01){let gap=cursor,gapPart=0;while(gap<start-0.01){const stop=Math.min(start,gap+8);timeline.push(makeInterlude(gap,stop,gapPart++));gap=stop;}}
+  for(let i=0;i<ordered.length;i++){const segment=ordered[i]!;const start=Math.max(0,Math.min(duration,segment.start));const nextStart=ordered[i+1]?.start??duration;
+    // a sung line ends at its last word; hold it through short breaths (< 2.5 s) so the picture doesn't flicker, and let longer instrumental gaps become interludes
+    const sungEnd=segment.end??nextStart;const end=Math.max(start,Math.min(duration,nextStart-sungEnd<2.5?nextStart:sungEnd+0.6));if(start>cursor+0.01){let gap=cursor,gapPart=0;while(gap<start-0.01){const stop=Math.min(start,gap+8);timeline.push(makeInterlude(gap,stop,gapPart++));gap=stop;}}
     let best:VideoScene|undefined,bestScore=0;for(const candidate of chatScenes){const score=lyricSimilarity(segment.text,candidate.line.text);if(score>bestScore){best=candidate;bestScore=score;}}
-    if(start<end&&best&&bestScore>=0.5){const words=spreadWords(best.line.text,start,end);pushChunks({...best,words},start,end,false);}
+    if(start<end&&best&&bestScore>=0.5){const words=segment.words?.length?segment.words:spreadWords(best.line.text,start,end);pushChunks({...best,words},start,end,false);}
     else if(start<end){let at=start,part=0;while(at<end-0.001){const stop=Math.min(end,at+8);timeline.push(makeInterlude(at,stop,part++));at=stop;}}
     cursor=Math.max(cursor,end);
   }

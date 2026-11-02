@@ -5,6 +5,7 @@ import type { CandidateLine, LineJudge, Moderation, MusicClip, MusicProvider, Sc
 import { MockLineJudge, MockModeration, MockMusicProvider, MockSceneArtist, MockVoice } from './mock.js';
 import { config } from '../config.js';
 import { claySystemPrompt, fallbackScene, validateScene } from '../scenes.js';
+import { syncLyrics } from '../lyric-sync.js';
 
 function warn(name: string, error: unknown): void {
   console.warn(`[${name}] falling back to mock:`, error instanceof Error ? error.message : error);
@@ -148,9 +149,21 @@ export class PascalProvider implements MusicProvider {
     // fidelity comes from Lyria's own lyrics_lines (accurate in tests); whisper adds words like "you" at the end of songs
     const fidelityScore = Math.min(scoreSungFidelity(lines, sung.flatMap((item) => item.text.split(/\s+/).map((word) => ({ word, start: item.start, end: item.end })))), chatLineShare(lines, sung));
     console.info(`[Music fidelity] job_id=${finished.id} score=${fidelityScore.toFixed(3)} strict=${strict}`);
-    // speech-to-text only refines word timing for the release (music video); round clips play straight away
-    const timings = release ? await this.transcribe(bytes, fileName, ext).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; }) : null;
-    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words: refineTimings(words, timings), fidelityScore, isMock:false };
+    // round clips play straight away on Lyria's own line times (accurate to ~0.2 s on the clip model).
+    // The release model only times the first line of each section, so for the music video we transcribe the song
+    // and align chat's lines to the heard words (every repeat, real word times).
+    if (release) {
+      const heard = await this.transcribe(bytes, fileName, ext, lines.map((line) => line.text)).catch((error) => { console.error(`[Pascal ASR] error_code=transcription_failed job_id=${finished.id}:`, error); return null; });
+      const synced = heard?.length ? syncLyrics(lines.map((line) => line.text), heard, durationSec) : null;
+      if (synced && synced.linesFound === lines.length && synced.matchedWords >= 0.6 * synced.expectedWords) {
+        console.info(`[Lyric sync] job_id=${finished.id} segments=${synced.segments.length} words=${synced.matchedWords}/${synced.expectedWords}`);
+        const firstTimes = lines.map((line, index) => { const first = synced.segments.find((segment) => segment.lineIndex === index)!; return { text: line.text, start: first.start, end: first.end }; });
+        return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: firstTimes, sungSegments: synced.segments.map(({ text, start, end, words: timed }) => ({ text, start, end, words: timed })), words: synced.segments.flatMap((segment) => segment.words), fidelityScore, isMock: false };
+      }
+      console.warn(`[Lyric sync] job_id=${finished.id} could not align (${synced ? `${synced.linesFound}/${lines.length} lines, ${synced.matchedWords}/${synced.expectedWords} words` : 'no transcript'}); using model line times`);
+      return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words: refineTimings(words, heard), fidelityScore, isMock: false };
+    }
+    return { audioUrl: `/media/${fileName}`, durationSec, lineTimings: lyricsLines, sungSegments: sung, words, fidelityScore, isMock:false };
   }
 
   private async pollJob(initial: PascalJob): Promise<PascalJob> {
@@ -166,12 +179,18 @@ export class PascalProvider implements MusicProvider {
     return job;
   }
 
-  private async transcribe(bytes: Buffer, fileName: string, ext: string): Promise<TimedWord[] | null> {
+  private async transcribe(bytes: Buffer, fileName: string, ext: string, lyrics: string[] = []): Promise<TimedWord[] | null> {
     const form = new FormData();
     form.set('model', config.pascalAsrModel);
-    form.set('params', JSON.stringify({ timestamp_granularity: 'word', response_format: 'verbose_json', language: 'auto' }));
+    // the known lyrics as a prompt keep the model on chat's words (e.g. "chai", not "shy")
+    form.set('params', JSON.stringify({ timestamp_granularity: 'word', response_format: 'verbose_json', language: 'en', ...(lyrics.length ? { prompt: [...new Set(lyrics)].join('. ') } : {}) }));
     form.set('file', new File([new Uint8Array(bytes)], fileName, { type: ext === '.wav' ? 'audio/wav' : 'audio/mpeg' }));
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/speech-to-text`, { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}` }, body: form });
+    let response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/speech-to-text`, { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}` }, body: form });
+    // STT shares Pascal's job-create rate limit with /music, so a call right after a render can get a 429
+    for (let attempt = 0; response.status === 429 && attempt < 3; attempt++) {
+      await this.wait(Number(response.headers.get('retry-after')) * 1000 || 2000);
+      response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/speech-to-text`, { method: 'POST', headers: { authorization: `Bearer ${this.apiKey}` }, body: form });
+    }
     if (!response.ok) throw new Error(`Pascal ASR returned ${response.status}`);
     const data = await response.json() as { result?: { words?: TimedWord[] }; words?: TimedWord[] };
     return data.result?.words ?? data.words ?? null;
