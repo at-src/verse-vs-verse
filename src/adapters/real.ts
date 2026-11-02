@@ -266,5 +266,5 @@ export async function measureDuration(bytes: Buffer, ext: string, existingPath?:
     const duration = Number(stdout.trim());
     if (!Number.isFinite(duration) || duration <= 0) throw new Error('ffprobe returned an invalid duration');
     return duration;
-  } finally { const { unlink } = await import('node:fs/promises'); await unlink(filePath).catch(() => undefined); }
+  } finally { if (!existingPath) { const { unlink } = await import('node:fs/promises'); await unlink(filePath).catch(() => undefined); } } // only remove the temp copy, never the saved song
 }
