@@ -45,16 +45,27 @@ export async function exportMusicVideo(songId: string, title: string, audioPath:
   await new Promise(resolvePromise=>setTimeout(resolvePromise,500));
   const output=resolve(media,`${songId}.mp4`);
   ffmpeg=spawnProcess(ffmpegPath,['-y','-f','image2pipe','-framerate',String(fps),'-vcodec','mjpeg','-i','pipe:0','-i',audioPath,'-t',String(duration),'-vf','scale=1280:720','-c:v','libx264','-pix_fmt','yuv420p','-r',String(fps),'-c:a','aac','-shortest',output],{stdio:['pipe','ignore','pipe']});
-  const ffmpegDone=waitChild(ffmpeg);
+  const ffmpegDone=waitChild(ffmpeg); ffmpegDone.catch(()=>undefined); // awaited below; never an unhandled rejection
+    // The picture only changes when the scene changes or another word appears (frames are drawn with
+    // animate:false), so render on those changes only and repeat the last JPEG in between. The clay filter
+    // makes each render expensive: this turns ~2,800 renders for a 2-minute song into ~60.
+    let lastKey = ''; let lastJpeg: Buffer | null = null;
     for (let frame=0;frame<frameCount;frame+=1) {
-      const time=frame/fps; const entry=[...scenes].reverse().find((item)=>time >= (item.words[0]?.start ?? 0))??scenes[0];
+      const time=frame/fps; const index=[...scenes.keys()].reverse().find((i)=>time >= (scenes[i]!.words[0]?.start ?? 0)) ?? 0;
+      const entry=scenes[index];
       const scene=entry?.scene??emptyScene(title); const line=entry?.line.text??title;
       const words=entry?.words??[];
-      await Runtime.evaluate({expression:`window.draw(${JSON.stringify({scene,line,words,time})})`,awaitPromise:true});
-      const screenshot=await Page.captureScreenshot({format:'jpeg',quality:82,fromSurface:true});
-      if (!ffmpeg.stdin!.write(Buffer.from(screenshot.data,'base64'))) await new Promise<void>(resolvePromise=>ffmpeg!.stdin!.once('drain',resolvePromise));
+      const key=`${index}:${words.filter((word)=>word.start<=time).length}`;
+      if (key !== lastKey || !lastJpeg) {
+        await Runtime.evaluate({expression:`window.draw(${JSON.stringify({scene,line,words,time})})`,awaitPromise:true});
+        const screenshot=await Page.captureScreenshot({format:'jpeg',quality:82,fromSurface:true});
+        lastJpeg=Buffer.from(screenshot.data,'base64'); lastKey=key;
+      }
+      if (ffmpeg.exitCode !== null) break; // ffmpeg stopped early: stop feeding it, its error is reported below
+      // wait for room in the pipe, but give up if ffmpeg exits meanwhile (otherwise this waits forever)
+      if (!ffmpeg.stdin!.write(lastJpeg)) await new Promise<void>(resolvePromise=>{ const done=()=>{ ffmpeg!.stdin!.off('drain',done); ffmpeg!.off('exit',done); resolvePromise(); }; ffmpeg!.stdin!.once('drain',done); ffmpeg!.once('exit',done); });
     }
-    ffmpeg.stdin!.end(); await ffmpegDone;
+    if (ffmpeg.exitCode === null) ffmpeg.stdin!.end(); await ffmpegDone;
   return `/media/${songId}.mp4`;
   };
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -83,4 +94,4 @@ function emptyScene(keyword:string):SceneSpec{return{keyword,mood:'day',ground:t
 function readProcessText(stream: NodeJS.ReadableStream): Promise<string> { return new Promise((resolvePromise,reject)=>{let text='';stream.setEncoding('utf8');stream.on('data',(chunk:string)=>{text+=chunk;});stream.on('error',reject);const timer=setInterval(()=>{const match=text.match(/DevTools listening on (ws:\/\/[^\s]+)/);if(match){clearInterval(timer);resolvePromise(match[1]!);}},100);setTimeout(()=>{clearInterval(timer);reject(new Error('Chrome DevTools endpoint timed out'));},10_000).unref();}); }
 async function waitForEndpoint(stderr: Promise<string>, chrome: ReturnType<typeof spawn>): Promise<string> { const failed=new Promise<never>((_,reject)=>chrome.once('exit',code=>reject(new Error(`Chrome exited before capture (${code})`))));return Promise.race([stderr,failed]); }
 function run(command:string,args:string[]):Promise<void>{return new Promise((resolvePromise,reject)=>{const child=spawn(command,args,{stdio:'ignore'});child.once('error',reject);child.once('exit',code=>code===0?resolvePromise():reject(new Error(`${command} exited ${code}`)));});}
-function waitChild(child:ReturnType<typeof spawn>):Promise<void>{return new Promise((resolvePromise,reject)=>{let stderr='';child.stderr?.setEncoding('utf8');child.stderr?.on('data',(chunk:string)=>{stderr+=chunk;});child.stdin?.on('error',(error)=>reject(new Error(`ffmpeg stdin failed: ${error.message}`)));child.once('error',reject);child.once('exit',code=>code===0?resolvePromise():reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-1000)}`)));});}
+function waitChild(child:ReturnType<typeof spawn>):Promise<void>{return new Promise((resolvePromise,reject)=>{let stderr='';child.stderr?.setEncoding('utf8');child.stderr?.on('data',(chunk:string)=>{stderr+=chunk;});child.stdin?.on('error',()=>undefined);child.once('error',reject);child.once('exit',code=>code===0?resolvePromise():reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-1000)}`)));});}

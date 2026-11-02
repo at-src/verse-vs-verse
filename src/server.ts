@@ -58,7 +58,7 @@ const engine = new RoundEngine({
   }),
   saveScene: (line, scene) => db.prepare('INSERT INTO scenes (id, line, scene_json, created_at) VALUES (?, ?, ?, ?)').run(randomBytes(12).toString('hex'), line, JSON.stringify(scene), Date.now()),
   onRelease: (song) => {
-    const audioPath = song.clip.audioUrl.startsWith('/media/') && !song.clip.audioUrl.includes('mock-tone') ? resolve('data', song.clip.audioUrl.slice('/media/'.length).split('?')[0]) : null;
+    const audioPath = song.clip.audioUrl.startsWith('/media/') && !song.clip.audioUrl.includes('mock-tone') ? resolve('data/media', song.clip.audioUrl.slice('/media/'.length).split('?')[0]) : null;
     if (!audioPath) {
       db.prepare("UPDATE songs SET video_status='failed',video_error='No saved audio file is available for video export' WHERE id=?").run(song.id);
       return;
@@ -202,4 +202,6 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, phase: engine.snapsho
 
 server.listen(config.port, () => console.log(`Verse vs Verse ready at http://localhost:${config.port}`));
 
+// a background job (video export, a provider call) must never take the live show down
+process.on('unhandledRejection', (error) => console.error('[unhandled]', error instanceof Error ? error.message : error));
 process.on('SIGINT', () => { engine.stop(); twitch.stop(); db.close(); server.close(() => process.exit(0)); });
