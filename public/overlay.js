@@ -39,7 +39,8 @@ function renderPanel(){
   else if(state.phase==='RELEASE')$('content').innerHTML=`<div>${state.song.map((line)=>escapeHtml(line.text)).join(' · ')}</div>`;
   else if(producing){
     const seconds=Math.floor((Date.now()-state.phaseStartedAt)/1000);
-    const winner=state.phase==='PRODUCE'?(state.song.at(-1)??state.shortlist[state.votes.indexOf(Math.max(...state.votes))]):null;
+    // the PRODUCE state is sent before the winner joins the song, so take it from this round's votes
+    const winner=state.phase==='PRODUCE'?(state.shortlist[state.votes.indexOf(Math.max(...state.votes))]??state.song.at(-1)):null;
     $('content').innerHTML=winner?`<div>Winning line by @${escapeHtml(winner.login)}:<br>“${escapeHtml(winner.text)}”</div><div class="mono">the AI band is recording it · ${seconds}s</div>`:`<div>${[...new Set(state.song.map(line=>'@'+line.login))].join(', ')} · ${seconds}s</div>`;
   }
   else if(state.phase==='PLAY'&&!state.clip&&state.clipError)$('content').textContent='This round’s clip could not be rendered. The winning line stays in the song.';
