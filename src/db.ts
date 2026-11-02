@@ -10,8 +10,9 @@ export const db = new Database(path);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 const songColumns = new Set((db.prepare('PRAGMA table_info(songs)').all() as Array<{ name: string }>).map((column) => column.name));
-if (!songColumns.has('video_url')) db.exec('ALTER TABLE songs ADD COLUMN video_url TEXT');
-if (!songColumns.has('video_status')) db.exec("ALTER TABLE songs ADD COLUMN video_status TEXT NOT NULL DEFAULT 'pending'");
+// upgrade an older songs table in place; a fresh database gets the full table below instead
+if (songColumns.size && !songColumns.has('video_url')) db.exec('ALTER TABLE songs ADD COLUMN video_url TEXT');
+if (songColumns.size && !songColumns.has('video_status')) db.exec("ALTER TABLE songs ADD COLUMN video_status TEXT NOT NULL DEFAULT 'pending'");
 db.exec(`
   CREATE TABLE IF NOT EXISTS twitch_tokens (
     user_id TEXT PRIMARY KEY,
