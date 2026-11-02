@@ -112,6 +112,14 @@ npm test
 npm run build
 ```
 
+## Credits
+
+- **[OpenAI Codex](https://openai.com/codex/)** built the application.
+- **[Pascal](https://pascalai.co)** is a voice AI platform built by the author of Verse vs Verse. It provides music generation, speech-to-text and text-to-speech through a single API, and powers every song in this project.
+- **[Twitch](https://dev.twitch.tv)** EventSub and Helix APIs connect the game to live chat.
+- **[OpenAI](https://platform.openai.com)** models judge lines, write song titles, plan scenes and moderate chat.
+- **[Chewy](https://fonts.google.com/specimen/Chewy)** font by Sideshow, under the Apache License 2.0.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
